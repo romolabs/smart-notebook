@@ -10,6 +10,25 @@ enum ProcessorKind { formatter, verifier }
 
 enum ProcessorState { completed, skipped, unavailable, failed }
 
+class AppSettings {
+  const AppSettings({required this.ollamaBaseUrl, required this.ollamaModel});
+
+  static const defaults = AppSettings(
+    ollamaBaseUrl: 'http://127.0.0.1:11434',
+    ollamaModel: 'gemma4:e4b',
+  );
+
+  final String ollamaBaseUrl;
+  final String ollamaModel;
+
+  AppSettings copyWith({String? ollamaBaseUrl, String? ollamaModel}) {
+    return AppSettings(
+      ollamaBaseUrl: ollamaBaseUrl ?? this.ollamaBaseUrl,
+      ollamaModel: ollamaModel ?? this.ollamaModel,
+    );
+  }
+}
+
 class ProcessorToggles {
   const ProcessorToggles({
     required this.spelling,

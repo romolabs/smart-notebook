@@ -57,6 +57,39 @@ class NotebookRepository {
     return seeds;
   }
 
+  Future<AppSettings> loadSettings() async {
+    final db = await _openDatabase();
+    final rows = await db.query(
+      'app_settings',
+      where: 'id = ?',
+      whereArgs: ['default'],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      await saveSettings(AppSettings.defaults);
+      return AppSettings.defaults;
+    }
+
+    final row = rows.first;
+    return AppSettings(
+      ollamaBaseUrl:
+          row['ollama_base_url'] as String? ??
+          AppSettings.defaults.ollamaBaseUrl,
+      ollamaModel:
+          row['ollama_model'] as String? ?? AppSettings.defaults.ollamaModel,
+    );
+  }
+
+  Future<void> saveSettings(AppSettings settings) async {
+    final db = await _openDatabase();
+    await db.insert('app_settings', {
+      'id': 'default',
+      'ollama_base_url': settings.ollamaBaseUrl,
+      'ollama_model': settings.ollamaModel,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   Future<void> saveNotes(List<NotebookNote> notes) async {
     final db = await _openDatabase();
 
@@ -104,12 +137,17 @@ class NotebookRepository {
     _database = await databaseFactory.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON;');
         },
         onCreate: (db, version) async {
           await _createSchema(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await _createSettingsTable(db);
+          }
         },
       ),
     );
@@ -155,10 +193,29 @@ class NotebookRepository {
     await db.execute(
       'CREATE INDEX idx_note_versions_note_id ON note_versions(note_id, version_number DESC);',
     );
+    await _createSettingsTable(db);
     await db.insert('schema_migrations', {
-      'version': 1,
+      'version': 2,
       'applied_at': DateTime.now().toUtc().toIso8601String(),
     });
+  }
+
+  Future<void> _createSettingsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id TEXT PRIMARY KEY,
+        ollama_base_url TEXT NOT NULL,
+        ollama_model TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await db.insert('app_settings', {
+      'id': 'default',
+      'ollama_base_url': AppSettings.defaults.ollamaBaseUrl,
+      'ollama_model': AppSettings.defaults.ollamaModel,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<List<NotebookNote>> _fetchNotes(Database db) async {

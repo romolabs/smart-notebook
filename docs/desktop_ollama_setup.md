@@ -2,6 +2,9 @@
 
 Use this when you want Smart Notebook on desktop to run the local formatter and verifier path through Ollama.
 
+If setup succeeds but the app still falls back or behaves oddly at runtime, use the troubleshooting guide:
+- [`docs/troubleshooting/ollama_gemma_local_troubleshooting.md`](./troubleshooting/ollama_gemma_local_troubleshooting.md)
+
 ## Expected Endpoint
 
 - Ollama should be available at `http://localhost:11434`

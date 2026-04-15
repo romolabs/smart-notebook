@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_notebook/app.dart';
 import 'package:smart_notebook/data/seed_notes.dart';
+import 'package:smart_notebook/models/notebook_models.dart';
 import 'package:smart_notebook/services/mock_enhancement_engine.dart';
 import 'package:smart_notebook/services/notebook_repository.dart';
 
@@ -28,12 +29,12 @@ void main() {
 
     await tester.pumpWidget(
       SmartNotebookApp(
-        engine: const MockEnhancementEngine(),
         repository: NotebookRepository.forTesting(
           databasePath: file.path,
           engine: const MockEnhancementEngine(),
         ),
         initialNotes: buildSeedNotes(const MockEnhancementEngine()),
+        initialSettings: AppSettings.defaults,
       ),
     );
     await tester.pump();
@@ -50,5 +51,7 @@ void main() {
     expect(find.text('Enhanced'), findsOneWidget);
     expect(find.text('Local Fast'), findsOneWidget);
     expect(find.text('Cloud Accurate'), findsOneWidget);
+    expect(find.text('Writer tools'), findsOneWidget);
+    expect(find.text('Heading'), findsOneWidget);
   });
 }

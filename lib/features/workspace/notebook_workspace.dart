@@ -6,16 +6,54 @@ import '../../models/notebook_models.dart';
 import '../../services/mock_enhancement_engine.dart';
 import '../../services/notebook_repository.dart';
 
+enum EditorFontFamily { modern, editorial, mono }
+
+class EditorAppearance {
+  const EditorAppearance({
+    required this.fontFamily,
+    required this.fontSize,
+    required this.isBold,
+    required this.isItalic,
+    required this.textColor,
+  });
+
+  final EditorFontFamily fontFamily;
+  final double fontSize;
+  final bool isBold;
+  final bool isItalic;
+  final Color textColor;
+
+  EditorAppearance copyWith({
+    EditorFontFamily? fontFamily,
+    double? fontSize,
+    bool? isBold,
+    bool? isItalic,
+    Color? textColor,
+  }) {
+    return EditorAppearance(
+      fontFamily: fontFamily ?? this.fontFamily,
+      fontSize: fontSize ?? this.fontSize,
+      isBold: isBold ?? this.isBold,
+      isItalic: isItalic ?? this.isItalic,
+      textColor: textColor ?? this.textColor,
+    );
+  }
+}
+
 class NotebookWorkspace extends StatefulWidget {
   const NotebookWorkspace({
     super.key,
     required this.engine,
     required this.repository,
+    required this.settings,
+    required this.onSaveSettings,
     this.initialNotes,
   });
 
   final MockEnhancementEngine engine;
   final NotebookRepository repository;
+  final AppSettings settings;
+  final Future<void> Function(AppSettings settings) onSaveSettings;
   final List<NotebookNote>? initialNotes;
 
   @override
@@ -42,6 +80,13 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     formatting: true,
     clarity: true,
     verification: true,
+  );
+  EditorAppearance _editorAppearance = const EditorAppearance(
+    fontFamily: EditorFontFamily.modern,
+    fontSize: 17,
+    isBold: false,
+    isItalic: false,
+    textColor: Color(0xFF18171A),
   );
   bool _isLoading = true;
   bool _isProcessing = false;
@@ -229,6 +274,12 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       },
     );
 
+    final settingsButton = FilledButton.tonalIcon(
+      onPressed: _openSettingsDialog,
+      icon: const Icon(Icons.tune),
+      label: const Text('Settings'),
+    );
+
     if (compact) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,7 +288,13 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           const SizedBox(height: 16),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: modeSwitcher,
+            child: Row(
+              children: [
+                modeSwitcher,
+                const SizedBox(width: 12),
+                settingsButton,
+              ],
+            ),
           ),
         ],
       );
@@ -248,6 +305,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         Expanded(child: titleBlock),
         const SizedBox(width: 16),
         modeSwitcher,
+        const SizedBox(width: 12),
+        settingsButton,
       ],
     );
   }
@@ -431,6 +490,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             ],
           ),
           const SizedBox(height: 16),
+          _buildWriterToolbar(context),
+          const SizedBox(height: 16),
           Expanded(
             child: TextField(
               controller: _controller,
@@ -438,7 +499,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
               expands: true,
               minLines: null,
               maxLines: null,
-              style: theme.textTheme.bodyLarge?.copyWith(height: 1.45),
+              style: _editorTextStyle(theme),
               decoration: InputDecoration(
                 hintText:
                     'Capture rough thoughts, meeting notes, research scraps...',
@@ -461,6 +522,129 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                 ),
                 contentPadding: const EdgeInsets.all(18),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWriterToolbar(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5EFE1),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE3D4B3)),
+      ),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(
+            width: 150,
+            child: DropdownButtonFormField<EditorFontFamily>(
+              initialValue: _editorAppearance.fontFamily,
+              isExpanded: true,
+              decoration: _toolbarFieldDecoration('Font'),
+              items: EditorFontFamily.values
+                  .map(
+                    (family) => DropdownMenuItem(
+                      value: family,
+                      child: Text(_fontFamilyLabel(family)),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: (value) {
+                if (value == null) {
+                  return;
+                }
+                setState(() {
+                  _editorAppearance = _editorAppearance.copyWith(
+                    fontFamily: value,
+                  );
+                });
+              },
+            ),
+          ),
+          SizedBox(
+            width: 110,
+            child: DropdownButtonFormField<double>(
+              initialValue: _editorAppearance.fontSize,
+              isExpanded: true,
+              decoration: _toolbarFieldDecoration('Size'),
+              items: const [
+                DropdownMenuItem(value: 15.0, child: Text('15 pt')),
+                DropdownMenuItem(value: 17.0, child: Text('17 pt')),
+                DropdownMenuItem(value: 20.0, child: Text('20 pt')),
+              ],
+              onChanged: (value) {
+                if (value == null) {
+                  return;
+                }
+                setState(() {
+                  _editorAppearance = _editorAppearance.copyWith(
+                    fontSize: value,
+                  );
+                });
+              },
+            ),
+          ),
+          _toolbarToggleButton(
+            icon: Icons.format_bold,
+            label: 'Bold',
+            selected: _editorAppearance.isBold,
+            onPressed: () {
+              setState(() {
+                _editorAppearance = _editorAppearance.copyWith(
+                  isBold: !_editorAppearance.isBold,
+                );
+              });
+            },
+          ),
+          _toolbarToggleButton(
+            icon: Icons.format_italic,
+            label: 'Italic',
+            selected: _editorAppearance.isItalic,
+            onPressed: () {
+              setState(() {
+                _editorAppearance = _editorAppearance.copyWith(
+                  isItalic: !_editorAppearance.isItalic,
+                );
+              });
+            },
+          ),
+          Wrap(
+            spacing: 8,
+            children: [
+              _colorSwatch(const Color(0xFF18171A), 'Ink'),
+              _colorSwatch(const Color(0xFF314652), 'Slate'),
+              _colorSwatch(const Color(0xFF0F5B53), 'Forest'),
+            ],
+          ),
+          _toolbarActionButton(
+            icon: Icons.title,
+            label: 'Heading',
+            onPressed: () => _insertSnippet('# '),
+          ),
+          _toolbarActionButton(
+            icon: Icons.format_list_bulleted,
+            label: 'Bullet',
+            onPressed: () => _insertSnippet('- '),
+          ),
+          _toolbarActionButton(
+            icon: Icons.check_box_outlined,
+            label: 'Checklist',
+            onPressed: () => _insertSnippet('- [ ] '),
+          ),
+          Text(
+            'Writer tools',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: const Color(0xFF715A2A),
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -876,6 +1060,97 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     );
   }
 
+  InputDecoration _toolbarFieldDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      isDense: true,
+      filled: true,
+      fillColor: Colors.white.withValues(alpha: 0.9),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFFD7D4CB)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFFD7D4CB)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFF167C80), width: 1.2),
+      ),
+    );
+  }
+
+  Widget _toolbarToggleButton({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onPressed,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onPressed,
+      child: Ink(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFDCEFE6) : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? const Color(0xFF167C80) : const Color(0xFFD7D4CB),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: const Color(0xFF29403F)),
+            const SizedBox(width: 8),
+            Text(label),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _toolbarActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return FilledButton.tonalIcon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+    );
+  }
+
+  Widget _colorSwatch(Color color, String tooltip) {
+    final selected = _editorAppearance.textColor == color;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () {
+          setState(() {
+            _editorAppearance = _editorAppearance.copyWith(textColor: color);
+          });
+        },
+        child: Ink(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? const Color(0xFF167C80) : Colors.white,
+              width: selected ? 2.4 : 1.4,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadNotes() async {
     try {
       final notes = await widget.repository.loadNotes();
@@ -1067,6 +1342,66 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     return '$mode ${_relativeDate(version.createdAt)}';
   }
 
+  TextStyle? _editorTextStyle(ThemeData theme) {
+    return theme.textTheme.bodyLarge?.copyWith(
+      height: 1.45,
+      fontSize: _editorAppearance.fontSize,
+      fontWeight: _editorAppearance.isBold ? FontWeight.w700 : FontWeight.w400,
+      fontStyle: _editorAppearance.isItalic
+          ? FontStyle.italic
+          : FontStyle.normal,
+      color: _editorAppearance.textColor,
+      fontFamily: _fontFamilyName(_editorAppearance.fontFamily),
+      fontFamilyFallback: _fontFamilyFallback(_editorAppearance.fontFamily),
+    );
+  }
+
+  String _fontFamilyLabel(EditorFontFamily family) {
+    return switch (family) {
+      EditorFontFamily.modern => 'Modern',
+      EditorFontFamily.editorial => 'Serif',
+      EditorFontFamily.mono => 'Mono',
+    };
+  }
+
+  String? _fontFamilyName(EditorFontFamily family) {
+    return switch (family) {
+      EditorFontFamily.modern => null,
+      EditorFontFamily.editorial => 'Times New Roman',
+      EditorFontFamily.mono => 'Courier New',
+    };
+  }
+
+  List<String>? _fontFamilyFallback(EditorFontFamily family) {
+    return switch (family) {
+      EditorFontFamily.modern => null,
+      EditorFontFamily.editorial => const ['Georgia', 'Times'],
+      EditorFontFamily.mono => const ['Menlo', 'Monaco'],
+    };
+  }
+
+  void _insertSnippet(String snippet) {
+    final selection = _controller.selection;
+    final originalText = _controller.text;
+    final start = selection.isValid ? selection.start : originalText.length;
+    final end = selection.isValid ? selection.end : originalText.length;
+    final insertionPoint = start < 0 ? originalText.length : start;
+    final replacementEnd = end < 0 ? originalText.length : end;
+    final updatedText = originalText.replaceRange(
+      insertionPoint,
+      replacementEnd,
+      snippet,
+    );
+    final caretOffset = insertionPoint + snippet.length;
+
+    _controller.value = _controller.value.copyWith(
+      text: updatedText,
+      selection: TextSelection.collapsed(offset: caretOffset),
+      composing: TextRange.empty,
+    );
+    _queueEnhancement(updatedText);
+  }
+
   Future<void> _runEnhancement(String rawContent) async {
     if (!mounted) {
       return;
@@ -1105,5 +1440,86 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       ProcessorState.unavailable => 'Fallback',
       ProcessorState.failed => 'Error',
     };
+  }
+
+  Future<void> _openSettingsDialog() async {
+    final baseUrlController = TextEditingController(
+      text: widget.settings.ollamaBaseUrl,
+    );
+    final modelController = TextEditingController(
+      text: widget.settings.ollamaModel,
+    );
+
+    final result = await showDialog<AppSettings>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Local Model Settings'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: baseUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Ollama Base URL',
+                    hintText: 'http://127.0.0.1:11434',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: modelController,
+                  decoration: const InputDecoration(
+                    labelText: 'Model',
+                    hintText: 'gemma4:e4b',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Use this to point the desktop app at your local Ollama runtime and preferred model.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  AppSettings(
+                    ollamaBaseUrl: baseUrlController.text.trim().isEmpty
+                        ? AppSettings.defaults.ollamaBaseUrl
+                        : baseUrlController.text.trim(),
+                    ollamaModel: modelController.text.trim().isEmpty
+                        ? AppSettings.defaults.ollamaModel
+                        : modelController.text.trim(),
+                  ),
+                );
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    baseUrlController.dispose();
+    modelController.dispose();
+
+    if (result == null) {
+      return;
+    }
+
+    await widget.onSaveSettings(result);
+    if (!mounted) {
+      return;
+    }
+    await _runEnhancement(_controller.text);
   }
 }
