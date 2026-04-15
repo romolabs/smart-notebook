@@ -62,6 +62,8 @@ class NotebookWorkspace extends StatefulWidget {
 
 class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   final _controller = TextEditingController();
+  final _searchController = TextEditingController();
+  final _notesRailScrollController = ScrollController();
 
   List<NotebookNote> _notes = const [];
   NotebookNote? _selectedNote;
@@ -91,6 +93,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   bool _isLoading = true;
   bool _isProcessing = false;
   String? _loadError;
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -107,6 +110,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     _enhancementDebounce?.cancel();
     _persistDebounce?.cancel();
     _controller.dispose();
+    _searchController.dispose();
+    _notesRailScrollController.dispose();
     super.dispose();
   }
 
@@ -349,9 +354,26 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             ),
             const SizedBox(height: 18),
             TextField(
+              controller: _searchController,
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value.trim().toLowerCase();
+                });
+              },
               decoration: InputDecoration(
                 hintText: 'Search notes',
                 prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchQuery.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {
+                            _searchQuery = '';
+                          });
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
                 filled: true,
                 fillColor: const Color(0xFFF4F6F3),
                 border: OutlineInputBorder(
@@ -362,63 +384,94 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             ),
             const SizedBox(height: 18),
             Expanded(
-              child: ListView.separated(
-                scrollDirection: compact ? Axis.horizontal : Axis.vertical,
-                itemCount: _notes.length,
-                separatorBuilder: (_, _) =>
-                    SizedBox(width: compact ? 10 : 0, height: compact ? 0 : 10),
-                itemBuilder: (context, index) {
-                  final note = _notes[index];
-                  final isSelected = note.id == selected.id;
-                  return SizedBox(
-                    width: compact ? 220 : null,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(18),
-                      onTap: () => _selectNote(note),
-                      child: Ink(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? const Color(0xFF153D44)
-                              : const Color(0xFFF6F6F1),
-                          borderRadius: BorderRadius.circular(18),
+              child: _filteredNotes.isEmpty
+                  ? _buildEmptySearchState(theme.textTheme)
+                  : Scrollbar(
+                      controller: _notesRailScrollController,
+                      thumbVisibility: !compact,
+                      child: ListView.separated(
+                        key: PageStorageKey<String>(
+                          'notes-rail-${compact ? 'compact' : 'desktop'}',
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              note.category,
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                color: isSelected
-                                    ? Colors.white70
-                                    : const Color(0xFF5B605F),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              note.title,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: isSelected ? Colors.white : null,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              _relativeDate(note.updatedAt),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: isSelected
-                                    ? Colors.white70
-                                    : const Color(0xFF7B817F),
-                              ),
-                            ),
-                          ],
+                        controller: _notesRailScrollController,
+                        primary: false,
+                        scrollDirection: compact
+                            ? Axis.horizontal
+                            : Axis.vertical,
+                        itemCount: _filteredNotes.length,
+                        separatorBuilder: (_, _) => SizedBox(
+                          width: compact ? 10 : 0,
+                          height: compact ? 0 : 10,
                         ),
+                        itemBuilder: (context, index) {
+                          final note = _filteredNotes[index];
+                          final isSelected = note.id == selected.id;
+                          return SizedBox(
+                            width: compact ? 220 : null,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(18),
+                              onTap: () => _selectNote(note),
+                              child: Ink(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? const Color(0xFF153D44)
+                                      : const Color(0xFFF6F6F1),
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? const Color(0xFF153D44)
+                                        : const Color(0xFFE2E4DE),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      note.category,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelMedium
+                                          ?.copyWith(
+                                            color: isSelected
+                                                ? Colors.white70
+                                                : const Color(0xFF5B605F),
+                                          ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      note.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                            color: isSelected
+                                                ? Colors.white
+                                                : null,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      _relativeDate(note.updatedAt),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: isSelected
+                                                ? Colors.white70
+                                                : const Color(0xFF7B817F),
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
-                  );
-                },
-              ),
             ),
           ],
         ),
@@ -1060,6 +1113,32 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     );
   }
 
+  Widget _buildEmptySearchState(TextTheme theme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search_off_outlined, size: 28),
+            const SizedBox(height: 10),
+            Text(
+              'No notes match this search yet.',
+              textAlign: TextAlign.center,
+              style: theme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Try another title or category keyword.',
+              textAlign: TextAlign.center,
+              style: theme.bodyMedium?.copyWith(color: const Color(0xFF5B605F)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   InputDecoration _toolbarFieldDecoration(String label) {
     return InputDecoration(
       labelText: label,
@@ -1309,6 +1388,23 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   List<NotebookNote> _replaceNote(NotebookNote updated) {
     return _notes
         .map((note) => note.id == updated.id ? updated : note)
+        .toList(growable: false);
+  }
+
+  List<NotebookNote> get _filteredNotes {
+    if (_searchQuery.isEmpty) {
+      return _notes;
+    }
+
+    return _notes
+        .where((note) {
+          final haystack = [
+            note.title,
+            note.category,
+            note.rawContent,
+          ].join(' ').toLowerCase();
+          return haystack.contains(_searchQuery);
+        })
         .toList(growable: false);
   }
 
