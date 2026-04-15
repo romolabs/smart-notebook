@@ -71,13 +71,21 @@ class NotebookRepository {
     }
 
     final row = rows.first;
-    return AppSettings(
+    final settings = AppSettings(
       ollamaBaseUrl:
           row['ollama_base_url'] as String? ??
           AppSettings.defaults.ollamaBaseUrl,
       ollamaModel:
           row['ollama_model'] as String? ?? AppSettings.defaults.ollamaModel,
     );
+    if (settings.ollamaModel == AppSettings.legacyDefaultModel) {
+      final migrated = settings.copyWith(
+        ollamaModel: AppSettings.defaults.ollamaModel,
+      );
+      await saveSettings(migrated);
+      return migrated;
+    }
+    return settings;
   }
 
   Future<void> saveSettings(AppSettings settings) async {

@@ -22,8 +22,9 @@ ollama serve
 
 ## Example Models
 
-Good MVP-friendly model names to try:
+Good MVP-friendly model names to try, with `gemma3:1b` as the recommended default:
 
+- `gemma3:1b`
 - `llama3.2`
 - `qwen2.5`
 - `mistral`
@@ -34,17 +35,17 @@ Good MVP-friendly model names to try:
 You can either pull first, then run:
 
 ```bash
-ollama pull llama3.2
-ollama run llama3.2
+ollama pull gemma3:1b
+ollama run gemma3:1b
 ```
 
 Or just run the model and let Ollama fetch it on demand:
 
 ```bash
-ollama run qwen2.5
+ollama run gemma3:1b
 ```
 
-If you want a smaller, faster local path for short edits, `llama3.2` is a good first choice. If you want to test a second option, `qwen2.5` is also a good candidate.
+If you want a smaller, faster local path for short edits, `gemma3:1b` is the default first choice. Use the other models only if you are intentionally testing alternatives.
 
 ## What Smart Notebook Shows When Ollama Is Missing
 

@@ -8,7 +8,7 @@ import 'mock_enhancement_engine.dart';
 class OllamaLocalModelAdapter extends LocalModelAdapter {
   const OllamaLocalModelAdapter({
     this.baseUrl = 'http://127.0.0.1:11434',
-    this.model = 'gemma4:e4b',
+    this.model = 'gemma3:1b',
     this.requestTimeout = const Duration(seconds: 8),
     this.probeTtl = const Duration(seconds: 10),
   });

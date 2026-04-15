@@ -33,7 +33,7 @@ What is still limited:
 
 ## Ollama And Gemma 4
 
-The desktop app is currently configured to look for Ollama on `http://127.0.0.1:11434` and uses `gemma4:e4b` as the default local model.
+The desktop app is currently configured to look for Ollama on `http://127.0.0.1:11434` and uses `gemma3:1b` as the default local model.
 
 If you are setting up a local model for the first time, this is the expected flow:
 
@@ -47,8 +47,8 @@ ollama serve
 3. Pull and run the model the app expects:
 
 ```bash
-ollama pull gemma4:e4b
-ollama run gemma4:e4b
+ollama pull gemma3:1b
+ollama run gemma3:1b
 ```
 
 4. Confirm the local server is reachable:
