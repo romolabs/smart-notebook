@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/smart-notebook/contracts",
+  "$defs": {
+    "NoteType": {
+      "type": "string",
+      "enum": ["general", "meeting", "class", "research", "journal"]
+    },
+    "EnhancementMode": {
+      "type": "string",
+      "enum": ["local_fast", "cloud_accurate"]
+    },
+    "TextSpan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "noteType", "tags", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "noteType": { "$ref": "#/$defs/NoteType" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "archivedAt": {
+          "anyOf": [
+            { "type": "string", "format": "date-time" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "NoteVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "noteId", "versionNumber", "rawContent", "enhancedContent", "enhancementMode", "pipelineRunId", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "noteId": { "type": "string", "minLength": 1 },
+        "versionNumber": { "type": "integer", "minimum": 1 },
+        "rawContent": { "type": "string" },
+        "enhancedContent": { "type": "string" },
+        "enhancementMode": { "$ref": "#/$defs/EnhancementMode" },
+        "pipelineRunId": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ChangeKind": {
+      "type": "string",
+      "enum": ["spelling", "formatting", "clarity", "summary", "action_item", "verification_warning"]
+    },
+    "ChangeItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "versionId", "kind", "rawText", "enhancedText", "confidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "versionId": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "#/$defs/ChangeKind" },
+        "rawText": { "type": "string" },
+        "enhancedText": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "explanation": { "type": "string" },
+        "sourceSpan": {
+          "anyOf": [
+            { "$ref": "#/$defs/TextSpan" },
+            { "type": "null" }
+          ]
+        },
+        "targetSpan": {
+          "anyOf": [
+            { "$ref": "#/$defs/TextSpan" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "VerificationStatus": {
+      "type": "string",
+      "enum": ["unverified", "likely_wrong", "needs_source", "resolved"]
+    },
+    "VerificationFlag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "versionId", "claimText", "status", "confidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "versionId": { "type": "string", "minLength": 1 },
+        "claimText": { "type": "string" },
+        "status": { "$ref": "#/$defs/VerificationStatus" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reason": { "type": "string" },
+        "suggestedCorrection": { "type": "string" },
+        "span": {
+          "anyOf": [
+            { "$ref": "#/$defs/TextSpan" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "PipelineProcessor": {
+      "type": "string",
+      "enum": ["spellcheck", "format", "clarify", "verify"]
+    },
+    "EnhancementPipelineRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["noteId", "rawContent", "noteType", "enhancementMode", "enabledProcessors"],
+      "properties": {
+        "noteId": { "type": "string", "minLength": 1 },
+        "versionId": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "rawContent": { "type": "string" },
+        "noteType": { "$ref": "#/$defs/NoteType" },
+        "enhancementMode": { "$ref": "#/$defs/EnhancementMode" },
+        "enabledProcessors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PipelineProcessor" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "locale": { "type": "string" }
+      }
+    },
+    "EnhancementPipelineResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["noteId", "versionId", "status", "enhancedContent", "changeItems", "verificationFlags"],
+      "properties": {
+        "noteId": { "type": "string", "minLength": 1 },
+        "versionId": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["ok", "partial", "failed"] },
+        "enhancedContent": { "type": "string" },
+        "changeItems": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ChangeItem" }
+        },
+        "verificationFlags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VerificationFlag" }
+        },
+        "modelTrace": { "type": "string" }
+      }
+    }
+  }
+}
