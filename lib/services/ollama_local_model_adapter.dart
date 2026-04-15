@@ -185,9 +185,24 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
       final body = await response.transform(utf8.decoder).join();
       final decoded = jsonDecode(body) as Map<String, dynamic>;
       final modelResponse = decoded['response'] as String? ?? '{}';
-      return jsonDecode(modelResponse) as Map<String, dynamic>;
+      return _decodeModelJson(modelResponse);
     } finally {
       client.close(force: true);
+    }
+  }
+
+  Map<String, dynamic> _decodeModelJson(String modelResponse) {
+    final trimmed = modelResponse.trim();
+    try {
+      return jsonDecode(trimmed) as Map<String, dynamic>;
+    } on FormatException {
+      final start = trimmed.indexOf('{');
+      final end = trimmed.lastIndexOf('}');
+      if (start < 0 || end <= start) {
+        rethrow;
+      }
+      final candidate = trimmed.substring(start, end + 1);
+      return jsonDecode(candidate) as Map<String, dynamic>;
     }
   }
 
@@ -199,28 +214,26 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
     ].join(', ');
 
     return '''
-You are the formatter processor for Smart Notebook.
+Return one JSON object only.
 
-Task:
-- Improve only these dimensions: $enabled
-- Preserve meaning, order, and intent.
-- Do not invent facts, dates, tasks, citations, or sources.
-- Return JSON only. No markdown fences. No prose outside JSON.
+Role: formatter for Smart Notebook.
+Goal: improve only $enabled.
 
-Return exactly this shape:
-{
-  "enhancedText": "string",
-  "changeItems": [
-    {
-      "type": "spelling|formatting|clarity",
-      "label": "string",
-      "description": "string"
-    }
-  ]
-}
+Rules:
+- Preserve meaning and original order.
+- Make the smallest safe edits.
+- Do not invent facts, names, dates, numbers, tasks, or sources.
+- If the note is already clear, return it unchanged.
+- Keep at most 3 changeItems.
+- Each description must be short.
 
-Raw note:
+JSON schema:
+{"enhancedText":"string","changeItems":[{"type":"spelling|formatting|clarity","label":"string","description":"string"}]}
+
+Raw note between <note> tags.
+<note>
 ${request.rawContent}
+</note>
 ''';
   }
 
@@ -229,32 +242,32 @@ ${request.rawContent}
     required String enhancedText,
   }) {
     return '''
-You are the verifier processor for Smart Notebook.
+Return one JSON object only.
 
-Task:
-- Review the raw note and enhanced note for factual claims that may need confirmation.
-- Be conservative. Flag only plausible issues.
-- Do not rewrite the note text.
-- Return JSON only. No markdown fences. No prose outside JSON.
+Role: verifier for Smart Notebook.
+Goal: flag only claims that may need manual checking.
 
-Return exactly this shape:
-{
-  "verificationFlags": [
-    {
-      "status": "warning|needsReview",
-      "claimText": "string",
-      "note": "string",
-      "confidence": 0.0
-    }
-  ],
-  "changeItems": []
-}
+Rules:
+- Be conservative.
+- Do not rewrite the note.
+- Do not invent facts or sources.
+- Prefer zero flags over weak guesses.
+- Keep flags to 3 or fewer.
+- note must be short and explain why to review.
+- confidence must be between 0.0 and 1.0.
 
-Raw note:
+JSON schema:
+{"verificationFlags":[{"status":"warning|needsReview","claimText":"string","note":"string","confidence":0.0}],"changeItems":[]}
+
+Raw note between <raw> tags.
+<raw>
 ${request.rawContent}
+</raw>
 
-Enhanced note:
+Enhanced note between <enhanced> tags.
+<enhanced>
 $enhancedText
+</enhanced>
 ''';
   }
 
