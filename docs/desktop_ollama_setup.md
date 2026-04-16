@@ -22,9 +22,9 @@ ollama serve
 
 ## Example Models
 
-Good MVP-friendly model names to try, with `gemma3:1b` as the recommended default:
+Good MVP-friendly model names to try, with `gemma4:e4b` as the recommended default:
 
-- `gemma3:1b`
+- `gemma4:e4b`
 - `llama3.2`
 - `qwen2.5`
 - `mistral`
@@ -35,17 +35,17 @@ Good MVP-friendly model names to try, with `gemma3:1b` as the recommended defaul
 You can either pull first, then run:
 
 ```bash
-ollama pull gemma3:1b
-ollama run gemma3:1b
+ollama pull gemma4:e4b
+ollama run gemma4:e4b
 ```
 
 Or just run the model and let Ollama fetch it on demand:
 
 ```bash
-ollama run gemma3:1b
+ollama run gemma4:e4b
 ```
 
-If you want a smaller, faster local path for short edits, `gemma3:1b` is the default first choice. Use the other models only if you are intentionally testing alternatives.
+If you want the app to follow the current default exactly, start with `gemma4:e4b`. Use the other models only if you are intentionally testing alternatives.
 
 ## What Smart Notebook Shows When Ollama Is Missing
 

@@ -8,7 +8,7 @@ import 'mock_enhancement_engine.dart';
 class OllamaLocalModelAdapter extends LocalModelAdapter {
   const OllamaLocalModelAdapter({
     this.baseUrl = 'http://127.0.0.1:11434',
-    this.model = 'gemma3:1b',
+    this.model = 'gemma4:e4b',
     this.requestTimeout = const Duration(seconds: 8),
     this.probeTtl = const Duration(seconds: 10),
   });
@@ -19,6 +19,7 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
   final Duration probeTtl;
 
   static DateTime? _lastProbeAt;
+  static String? _lastProbeKey;
   static bool _lastReachable = false;
   static Set<String> _lastModels = const {};
 
@@ -26,16 +27,16 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
   }) async {
-    final available = await _ensureModelAvailable();
-    if (!available) {
-      return const FormatterProcessorResult(
+    final probe = await _probeRuntime();
+    if (!probe.modelAvailable) {
+      return FormatterProcessorResult(
         enhancedText: '',
         changes: [],
         status: ProcessorStatus(
           kind: ProcessorKind.formatter,
           state: ProcessorState.unavailable,
           label: 'Formatter',
-          detail: 'No local model runtime detected.',
+          detail: probe.detail,
         ),
       );
     }
@@ -45,11 +46,15 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
       final enhancedText =
           (payload['enhancedText'] as String?)?.trim() ??
           request.rawContent.trim();
+      final stabilizedText = _stabilizeEnhancedText(
+        rawContent: request.rawContent,
+        enhancedText: enhancedText,
+      );
       final changeItems = _parseChangeItems(payload['changeItems']);
       return FormatterProcessorResult(
-        enhancedText: enhancedText.isEmpty
+        enhancedText: stabilizedText.isEmpty
             ? request.rawContent.trim()
-            : enhancedText,
+            : stabilizedText,
         changes: changeItems,
         status: ProcessorStatus(
           kind: ProcessorKind.formatter,
@@ -77,16 +82,16 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
     required EnhancementRequest request,
     required String enhancedText,
   }) async {
-    final available = await _ensureModelAvailable();
-    if (!available) {
-      return const VerifierProcessorResult(
+    final probe = await _probeRuntime();
+    if (!probe.modelAvailable) {
+      return VerifierProcessorResult(
         flags: [],
         changes: [],
         status: ProcessorStatus(
           kind: ProcessorKind.verifier,
           state: ProcessorState.unavailable,
           label: 'Verifier',
-          detail: 'No local model runtime detected.',
+          detail: probe.detail,
         ),
       );
     }
@@ -119,10 +124,13 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
     }
   }
 
-  Future<bool> _ensureModelAvailable() async {
+  Future<_ProbeResult> _probeRuntime() async {
     final now = DateTime.now();
-    if (_lastProbeAt != null && now.difference(_lastProbeAt!) < probeTtl) {
-      return _lastReachable && _lastModels.contains(model);
+    final probeKey = '$baseUrl|$model';
+    if (_lastProbeKey == probeKey &&
+        _lastProbeAt != null &&
+        now.difference(_lastProbeAt!) < probeTtl) {
+      return _buildProbeResult();
     }
 
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
@@ -131,10 +139,11 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
       final request = await client.getUrl(uri).timeout(requestTimeout);
       final response = await request.close().timeout(requestTimeout);
       if (response.statusCode != 200) {
+        _lastProbeKey = probeKey;
         _lastProbeAt = now;
         _lastReachable = false;
         _lastModels = const {};
-        return false;
+        return _buildProbeResult();
       }
 
       final body = await response.transform(utf8.decoder).join();
@@ -144,18 +153,42 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
           .map((item) => item['name'] as String? ?? '')
           .where((item) => item.isNotEmpty)
           .toSet();
+      _lastProbeKey = probeKey;
       _lastProbeAt = now;
       _lastReachable = true;
       _lastModels = models;
-      return models.contains(model);
+      return _buildProbeResult();
     } catch (_) {
+      _lastProbeKey = probeKey;
       _lastProbeAt = now;
       _lastReachable = false;
       _lastModels = const {};
-      return false;
+      return _buildProbeResult();
     } finally {
       client.close(force: true);
     }
+  }
+
+  _ProbeResult _buildProbeResult() {
+    if (!_lastReachable) {
+      return const _ProbeResult(
+        reachable: false,
+        modelAvailable: false,
+        detail: 'No local model runtime detected.',
+      );
+    }
+    if (!_lastModels.contains(model)) {
+      return _ProbeResult(
+        reachable: true,
+        modelAvailable: false,
+        detail: 'Ollama is running, but model "$model" is not installed.',
+      );
+    }
+    return const _ProbeResult(
+      reachable: true,
+      modelAvailable: true,
+      detail: 'Local model runtime detected.',
+    );
   }
 
   Future<Map<String, dynamic>> _generateJson(String prompt) async {
@@ -223,6 +256,9 @@ Rules:
 - Preserve meaning and original order.
 - Make the smallest safe edits.
 - Do not invent facts, names, dates, numbers, tasks, or sources.
+- Preserve line breaks, list structure, and headings when they already exist.
+- Do not collapse multiple lines into one paragraph.
+- Keep numbered lists as numbered lists.
 - If the note is already clear, return it unchanged.
 - Keep at most 3 changeItems.
 - Each description must be short.
@@ -235,6 +271,40 @@ Raw note between <note> tags.
 ${request.rawContent}
 </note>
 ''';
+  }
+
+  String _stabilizeEnhancedText({
+    required String rawContent,
+    required String enhancedText,
+  }) {
+    var result = enhancedText.trim();
+    if (result.isEmpty) {
+      return rawContent.trim();
+    }
+
+    final rawLineCount = '\n'.allMatches(rawContent).length + 1;
+    final enhancedLineCount = '\n'.allMatches(result).length + 1;
+
+    if (rawLineCount > 2 && enhancedLineCount == 1) {
+      result = result
+          .replaceAllMapped(
+            RegExp(r'\s+(\d+\.)\s+'),
+            (match) => '\n${match.group(1)} ',
+          )
+          .replaceAllMapped(
+            RegExp(r'\s+(Title:)'),
+            (match) => '\n${match.group(1)}',
+          );
+    }
+
+    result = result
+        .replaceAllMapped(RegExp(r'^(\d+\.)\s*', multiLine: true), (match) {
+          return '${match.group(1)} ';
+        })
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+
+    return result;
   }
 
   String _buildVerifierPrompt({
@@ -317,4 +387,16 @@ $enhancedText
       _ => VerificationStatus.warning,
     };
   }
+}
+
+class _ProbeResult {
+  const _ProbeResult({
+    required this.reachable,
+    required this.modelAvailable,
+    required this.detail,
+  });
+
+  final bool reachable;
+  final bool modelAvailable;
+  final String detail;
 }

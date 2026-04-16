@@ -63,17 +63,52 @@ class MockEnhancementEngine implements EnhancementEngine {
     if (request.toggles.spelling ||
         request.toggles.formatting ||
         request.toggles.clarity) {
+      final baselineChanges = <EnhancementChange>[];
+      final baseline = _applyFormatterFallback(
+        working,
+        baselineChanges,
+        request.toggles,
+      );
       final formatterResult = request.modelMode == ModelMode.localFast
           ? await localModelAdapter.runFormatter(request: request)
           : _cloudNotReadyFormatter();
 
-      if (formatterResult.status.state == ProcessorState.completed) {
+      if (formatterResult.status.state == ProcessorState.completed &&
+          _shouldUseModelFormatter(
+            rawContent: request.rawContent,
+            baseline: baseline,
+            candidate: formatterResult.enhancedText,
+          )) {
         working = formatterResult.enhancedText;
-        changes.addAll(formatterResult.changes);
-        processorStatuses.add(formatterResult.status);
+        changes.addAll(
+          formatterResult.changes.isEmpty
+              ? baselineChanges
+              : formatterResult.changes,
+        );
+        processorStatuses.add(
+          ProcessorStatus(
+            kind: ProcessorKind.formatter,
+            state: ProcessorState.completed,
+            label: 'Formatter',
+            detail:
+                '${formatterResult.status.detail} Accepted after structural quality check.',
+          ),
+        );
       } else {
-        working = _applyFormatterFallback(working, changes, request.toggles);
-        processorStatuses.add(_fallbackStatus(formatterResult.status));
+        working = baseline;
+        changes.addAll(baselineChanges);
+        processorStatuses.add(
+          ProcessorStatus(
+            kind: ProcessorKind.formatter,
+            state: request.modelMode == ModelMode.localFast
+                ? ProcessorState.completed
+                : formatterResult.status.state,
+            label: 'Formatter',
+            detail: request.modelMode == ModelMode.localFast
+                ? 'Used deterministic structure-preserving formatter because model output was weaker.'
+                : formatterResult.status.detail,
+          ),
+        );
       }
     } else {
       processorStatuses.add(
@@ -87,18 +122,30 @@ class MockEnhancementEngine implements EnhancementEngine {
     }
 
     if (request.toggles.verification) {
-      final verifierResult = request.modelMode == ModelMode.localFast
-          ? await localModelAdapter.runVerifier(
-              request: request,
-              enhancedText: working,
-            )
-          : _cloudNotReadyVerifier();
-
-      if (verifierResult.status.state == ProcessorState.completed) {
-        flags.addAll(verifierResult.flags);
-        changes.addAll(verifierResult.changes);
-        processorStatuses.add(verifierResult.status);
+      if (request.modelMode == ModelMode.localFast) {
+        final verificationFlags = _detectVerificationFlags(request.rawContent);
+        if (verificationFlags.isNotEmpty) {
+          flags.addAll(verificationFlags);
+          changes.add(
+            const EnhancementChange(
+              type: ChangeType.verification,
+              label: 'Verification hints',
+              description:
+                  'Flagged specific claims that may deserve a source check before sharing.',
+            ),
+          );
+        }
+        processorStatuses.add(
+          const ProcessorStatus(
+            kind: ProcessorKind.verifier,
+            state: ProcessorState.completed,
+            label: 'Verifier',
+            detail:
+                'Used conservative local verification rules to avoid speculative model warnings.',
+          ),
+        );
       } else {
+        final verifierResult = _cloudNotReadyVerifier();
         final verificationFlags = _detectVerificationFlags(request.rawContent);
         if (verificationFlags.isNotEmpty) {
           flags.addAll(verificationFlags);
@@ -254,6 +301,53 @@ class MockEnhancementEngine implements EnhancementEngine {
       label: status.label,
       detail: status.detail,
     );
+  }
+
+  bool _shouldUseModelFormatter({
+    required String rawContent,
+    required String baseline,
+    required String candidate,
+  }) {
+    final normalizedCandidate = candidate.trim();
+    if (normalizedCandidate.isEmpty) {
+      return false;
+    }
+
+    final rawLines = _meaningfulLines(rawContent);
+    final baselineLines = _meaningfulLines(baseline);
+    final candidateLines = _meaningfulLines(normalizedCandidate);
+    final hasStructuredRaw = rawLines.length >= 3;
+
+    if (hasStructuredRaw && candidateLines.length < baselineLines.length) {
+      return false;
+    }
+
+    final numberedListCount = RegExp(
+      r'^\d+\.',
+      multiLine: true,
+    ).allMatches(rawContent).length;
+    final candidateNumberedCount = RegExp(
+      r'^\d+\.',
+      multiLine: true,
+    ).allMatches(normalizedCandidate).length;
+    if (numberedListCount >= 2 && candidateNumberedCount < numberedListCount) {
+      return false;
+    }
+
+    if (rawContent.contains('Title:') &&
+        !normalizedCandidate.contains('Title:')) {
+      return false;
+    }
+
+    return true;
+  }
+
+  List<String> _meaningfulLines(String input) {
+    return input
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
   }
 
   String _applyFormatterFallback(

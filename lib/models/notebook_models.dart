@@ -13,10 +13,10 @@ enum ProcessorState { completed, skipped, unavailable, failed }
 class AppSettings {
   const AppSettings({required this.ollamaBaseUrl, required this.ollamaModel});
 
-  static const legacyDefaultModel = 'gemma4:e4b';
+  static const legacyDefaultModel = 'gemma3:1b';
   static const defaults = AppSettings(
     ollamaBaseUrl: 'http://127.0.0.1:11434',
-    ollamaModel: 'gemma3:1b',
+    ollamaModel: 'gemma4:e4b',
   );
 
   final String ollamaBaseUrl;

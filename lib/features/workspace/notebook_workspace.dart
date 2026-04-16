@@ -1569,7 +1569,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                   controller: modelController,
                   decoration: const InputDecoration(
                     labelText: 'Model',
-                    hintText: 'gemma3:1b',
+                    hintText: 'gemma4:e4b',
                   ),
                 ),
                 const SizedBox(height: 12),

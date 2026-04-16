@@ -12,7 +12,7 @@ This doc focuses on:
 ## Assumptions
 - Ollama is installed on the same machine as Smart Notebook.
 - Ollama is listening on `http://localhost:11434`.
-- The recommended default local model is `gemma3:1b`, unless you are intentionally testing another Gemma-family variant.
+- The recommended default local model is `gemma4:e4b`, unless you are intentionally testing another Gemma-family variant.
 - Smart Notebook should remain usable even when the local model is unhealthy.
 
 ## Fast Triage
@@ -49,15 +49,15 @@ Expected results:
 If the model is missing, pull the default Gemma tag first.
 
 ```bash
-ollama pull gemma3:1b
-ollama run gemma3:1b
+ollama pull gemma4:e4b
+ollama run gemma4:e4b
 ```
 
-Use `gemma3:1b` as the baseline check. Only swap to another model if you are comparing behavior intentionally.
+Use `gemma4:e4b` as the baseline check. Only swap to another model if you are comparing behavior intentionally.
 
 Signs the model is available:
-- `ollama list` includes `gemma3:1b`.
-- `ollama run gemma3:1b` opens an interactive prompt without errors.
+- `ollama list` includes `gemma4:e4b`.
+- `ollama run gemma4:e4b` opens an interactive prompt without errors.
 - `ollama ps` shows the model after it starts.
 
 ## Runtime Verification
@@ -67,7 +67,7 @@ The fastest way to verify the full local path is to send a tiny API request dire
 curl http://localhost:11434/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemma3:1b",
+    "model": "gemma4:e4b",
     "messages": [
       {
         "role": "user",
@@ -89,7 +89,7 @@ If you prefer the generate endpoint, use a plain prompt:
 curl http://localhost:11434/api/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemma3:1b",
+    "model": "gemma4:e4b",
     "prompt": "Reply with exactly: local model ok",
     "stream": false
   }'
@@ -128,8 +128,8 @@ Likely cause:
 
 Fix:
 - run `ollama list`
-- pull `gemma3:1b`
-- retry `ollama run gemma3:1b`
+- pull `gemma4:e4b`
+- retry `ollama run gemma4:e4b`
 
 ### The API responds but the app still uses fallback
 Likely cause:
@@ -149,7 +149,7 @@ Likely cause:
 - another model is already using the runtime
 
 Fix:
-- use `gemma3:1b` as the default small model
+- use `gemma4:e4b` as the default model
 - stop other running models with `ollama ps` and the relevant stop command
 - retry with a short prompt first
 
@@ -168,7 +168,7 @@ Fix:
 Before trusting local mode, confirm all of these:
 - `ollama serve` is running
 - `curl http://localhost:11434/api/tags` returns JSON
-- `ollama list` shows `gemma3:1b`
+- `ollama list` shows `gemma4:e4b`
 - a direct `api/chat` or `api/generate` request returns a non-empty response
 - Smart Notebook shows local mode instead of fallback
 
@@ -182,7 +182,7 @@ curl http://localhost:11434/api/tags
 curl http://localhost:11434/api/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemma3:1b",
+    "model": "gemma4:e4b",
     "messages": [
       {
         "role": "user",
