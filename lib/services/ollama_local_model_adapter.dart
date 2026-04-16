@@ -263,12 +263,17 @@ Rules:
 - Do not propose edits for blank, code, heading, or tableRow lines.
 - Each replacement must be exactly one non-empty line with no newline characters.
 - Keep numbered lists as numbered lists and preserve checkbox state.
+- Sidecar artifacts are allowed only when clearly grounded in the cited evidence lines.
+- Suggested titles must reuse source language.
+- Summaries must use only source information.
+- Action items must stay evidence-backed and must not guess missing owners or dates.
 - If no safe edit is needed, return empty arrays.
 - Keep at most 3 lineEdits.
+- Keep at most 3 artifacts.
 - Keep labels and descriptions short.
 
 JSON schema:
-{"lineEdits":[{"lineIndex":0,"replacement":"string","type":"spelling|formatting|clarity","label":"string","description":"string"}],"artifacts":[]}
+{"lineEdits":[{"lineIndex":0,"replacement":"string","type":"spelling|formatting|clarity","label":"string","description":"string"}],"artifacts":[{"kind":"title|summary|actionItems","value":"string","evidenceLineIndexes":[0],"label":"string","description":"string"}]}
 
 Champion draft lines between <champion> tags.
 Use the exact lineIndex values shown below.

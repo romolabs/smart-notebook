@@ -1,5 +1,6 @@
 import '../models/notebook_models.dart';
 import 'acceptance_gate.dart';
+import 'artifact_builder.dart';
 import 'deterministic_formatter.dart';
 import 'note_parser.dart';
 import 'proposal_merger.dart';
@@ -50,6 +51,7 @@ class MockEnhancementEngine implements EnhancementEngine {
     this.parser = const NoteParser(),
     this.formatter = const DeterministicFormatter(),
     this.acceptanceGate = const AcceptanceGate(),
+    this.artifactBuilder = const ArtifactBuilder(),
     this.proposalMerger = const ProposalMerger(),
   });
 
@@ -57,6 +59,7 @@ class MockEnhancementEngine implements EnhancementEngine {
   final NoteParser parser;
   final DeterministicFormatter formatter;
   final AcceptanceGate acceptanceGate;
+  final ArtifactBuilder artifactBuilder;
   final ProposalMerger proposalMerger;
 
   @override
@@ -75,6 +78,10 @@ class MockEnhancementEngine implements EnhancementEngine {
     final champion = formatter.buildChampionDraft(
       structure,
       toggles: request.toggles,
+    );
+    final artifacts = artifactBuilder.buildDeterministicArtifacts(
+      structure: structure,
+      champion: champion,
     );
 
     var enhancedText = champion.text;
@@ -103,6 +110,7 @@ class MockEnhancementEngine implements EnhancementEngine {
                 )
                 .toList(growable: false),
           );
+          _mergeArtifacts(artifacts, acceptance.acceptedArtifacts);
         },
       ),
     );
@@ -114,9 +122,10 @@ class MockEnhancementEngine implements EnhancementEngine {
 
     return EnhancementSnapshot(
       enhancedContent: enhancedText,
-      summary: _buildSummary(structure.note.analysisText),
+      summary: _summaryFromArtifacts(artifacts, structure.note.analysisText),
       changes: changes,
       flags: flags,
+      artifacts: artifacts,
       processorStatuses: processorStatuses,
     );
   }
@@ -138,12 +147,17 @@ class MockEnhancementEngine implements EnhancementEngine {
       toggles: request.toggles,
     );
     final verification = _buildVerificationResult(request, normalizedRaw);
+    final artifacts = artifactBuilder.buildDeterministicArtifacts(
+      structure: structure,
+      champion: champion,
+    );
 
     return EnhancementSnapshot(
       enhancedContent: champion.text,
-      summary: _buildSummary(structure.note.analysisText),
+      summary: _summaryFromArtifacts(artifacts, structure.note.analysisText),
       changes: [...champion.changes, ...verification.changes],
       flags: verification.flags,
+      artifacts: artifacts,
       processorStatuses: [
         if (request.toggles.spelling ||
             request.toggles.formatting ||
@@ -214,7 +228,8 @@ class MockEnhancementEngine implements EnhancementEngine {
       champion: champion,
       proposal: modelResult.proposal,
     );
-    if (acceptance.acceptedLineEdits.isEmpty) {
+    if (acceptance.acceptedLineEdits.isEmpty &&
+        acceptance.acceptedArtifacts.isEmpty) {
       final reason = acceptance.issues.isEmpty
           ? 'the trust gate rejected every proposed edit.'
           : acceptance.issues.first.message;
@@ -229,14 +244,19 @@ class MockEnhancementEngine implements EnhancementEngine {
 
     onAcceptedProposals(acceptance);
     final rejectedCount =
-        modelResult.proposal.lineEdits.length -
-        acceptance.acceptedLineEdits.length;
+        (modelResult.proposal.lineEdits.length -
+            acceptance.acceptedLineEdits.length) +
+        (modelResult.proposal.artifacts.length -
+            acceptance.acceptedArtifacts.length);
+    final acceptedCount =
+        acceptance.acceptedLineEdits.length +
+        acceptance.acceptedArtifacts.length;
     return ProcessorStatus(
       kind: ProcessorKind.formatter,
       state: ProcessorState.completed,
       label: 'Formatter',
       detail:
-          'Built the deterministic champion draft and merged ${acceptance.acceptedLineEdits.length} trust-gated bounded edit(s) through the engine renderer.${rejectedCount > 0 ? ' Rejected $rejectedCount edit(s) that did not pass the gate.' : ''}',
+          'Built the deterministic champion draft and merged $acceptedCount trust-gated proposal item(s) through the engine renderer.${rejectedCount > 0 ? ' Rejected $rejectedCount item(s) that did not pass the gate.' : ''}',
     );
   }
 
@@ -309,6 +329,22 @@ class MockEnhancementEngine implements EnhancementEngine {
     }
   }
 
+  void _mergeArtifacts(
+    List<ArtifactProposal> destination,
+    List<ArtifactProposal> incoming,
+  ) {
+    for (final artifact in incoming) {
+      final existingIndex = destination.indexWhere(
+        (current) => current.kind == artifact.kind,
+      );
+      if (existingIndex >= 0) {
+        destination[existingIndex] = artifact;
+      } else {
+        destination.add(artifact);
+      }
+    }
+  }
+
   EnhancementSnapshot _emptySnapshot() {
     return const EnhancementSnapshot(
       enhancedContent: 'Your enhanced note will appear here as you type.',
@@ -316,6 +352,7 @@ class MockEnhancementEngine implements EnhancementEngine {
           'Start writing in the raw pane to see structure, cleanup, and review hints.',
       changes: [],
       flags: [],
+      artifacts: [],
       processorStatuses: [
         ProcessorStatus(
           kind: ProcessorKind.formatter,
@@ -393,6 +430,13 @@ class MockEnhancementEngine implements EnhancementEngine {
     }
 
     return sentences.join(' ').trim();
+  }
+
+  String _summaryFromArtifacts(List<ArtifactProposal> artifacts, String input) {
+    final summaryArtifact = artifacts
+        .where((artifact) => artifact.kind == ArtifactKind.summary)
+        .firstOrNull;
+    return summaryArtifact?.value ?? _buildSummary(input);
   }
 }
 

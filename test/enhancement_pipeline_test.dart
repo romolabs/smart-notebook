@@ -114,6 +114,59 @@ Title: roadmap
     );
   });
 
+  test('acceptance gate only accepts artifacts backed by source evidence', () {
+    final champion = formatter.buildChampionDraft(
+      parser.parse(
+        ['Project sync', '- budget 1200', '- email Alex'].join('\n'),
+      ),
+      toggles: toggles,
+    );
+
+    const proposal = ModelProposal(
+      artifacts: [
+        ArtifactProposal(
+          kind: ArtifactKind.summary,
+          value: 'Budget is 1200 and Alex needs a follow-up.',
+          evidenceLineIndexes: [1, 2],
+          label: 'Evidence-backed summary',
+          description: 'Summarizes claims already present in the source note.',
+        ),
+        ArtifactProposal(
+          kind: ArtifactKind.title,
+          value: 'Executive recap',
+          evidenceLineIndexes: [],
+          label: 'Unsupported title',
+          description: 'Missing evidence should fail the trust gate.',
+        ),
+        ArtifactProposal(
+          kind: ArtifactKind.summary,
+          value: 'Budget is trending higher than last week.',
+          evidenceLineIndexes: [99],
+          label: 'Out-of-range summary',
+          description: 'References a line that does not exist in the note.',
+        ),
+      ],
+    );
+
+    final result = gate.evaluateLineEditProposals(
+      champion: champion,
+      proposal: proposal,
+    );
+
+    expect(
+      result.acceptedArtifacts.map((artifact) => artifact.label).toList(),
+      ['Evidence-backed summary'],
+    );
+    expect(result.acceptedArtifacts.single.kind, ArtifactKind.summary);
+    expect(
+      result.issues.map((issue) => issue.code),
+      containsAll([
+        'artifact_missing_evidence_title',
+        'artifact_missing_evidence_summary',
+      ]),
+    );
+  });
+
   test('proposal merger applies accepted edits by champion line order', () {
     final champion = formatter.buildChampionDraft(
       parser.parse(

@@ -271,7 +271,7 @@ class AcceptanceGate {
     }
 
     for (final artifact in proposal.artifacts) {
-      if (_artifactHasEvidence(artifact, champion.structure)) {
+      if (_artifactPassesRules(artifact, champion)) {
         acceptedArtifacts.add(artifact);
       } else {
         issues.add(
@@ -333,5 +333,98 @@ class AcceptanceGate {
 
     final lineIndexes = structure.lines.map((line) => line.index).toSet();
     return artifact.evidenceLineIndexes.every(lineIndexes.contains);
+  }
+
+  bool _artifactPassesRules(ArtifactProposal artifact, ChampionDraft champion) {
+    if (!_artifactHasEvidence(artifact, champion.structure)) {
+      return false;
+    }
+
+    final evidenceLines = artifact.evidenceLineIndexes
+        .map(
+          (index) =>
+              champion.renderedLinesBySourceIndex[index] ??
+              champion.structure.lines
+                  .where((line) => line.index == index)
+                  .first
+                  .sourceLine
+                  .trimRight(),
+        )
+        .toList(growable: false);
+    final evidenceText = evidenceLines.join('\n');
+    final evidenceTokens = parser.parse(evidenceText).protectedTokens;
+    final artifactTokens = parser.parse(artifact.value).protectedTokens;
+
+    final introducedTokens = artifactTokens
+        .difference(evidenceTokens)
+        .where(_isRiskyNewToken)
+        .toList(growable: false);
+    if (introducedTokens.isNotEmpty) {
+      return false;
+    }
+
+    final evidenceWords = RegExp(r'[A-Za-z]{4,}')
+        .allMatches(evidenceText.toLowerCase())
+        .map((match) => match.group(0)!)
+        .toSet();
+    final artifactWords = RegExp(r'[A-Za-z]{4,}')
+        .allMatches(artifact.value.toLowerCase())
+        .map((match) => match.group(0)!)
+        .toSet();
+
+    return switch (artifact.kind) {
+      ArtifactKind.title =>
+        !artifact.value.contains('\n') &&
+            artifact.value.length <= 80 &&
+            artifactWords.any(evidenceWords.contains),
+      ArtifactKind.summary =>
+        !artifact.value.contains('\n\n') &&
+            artifact.value.length <= 240 &&
+            artifactWords.any(evidenceWords.contains),
+      ArtifactKind.actionItems => _actionItemsPassRules(
+        artifact.value,
+        evidenceWords: evidenceWords,
+        evidenceTokens: evidenceTokens,
+      ),
+    };
+  }
+
+  bool _actionItemsPassRules(
+    String value, {
+    required Set<String> evidenceWords,
+    required Set<String> evidenceTokens,
+  }) {
+    final lines = value
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    if (lines.isEmpty || lines.length > 5) {
+      return false;
+    }
+
+    for (final line in lines) {
+      if (!line.startsWith('- ') && !RegExp(r'^- \[[ xX]\] ').hasMatch(line)) {
+        return false;
+      }
+
+      final lineWords = RegExp(
+        r'[A-Za-z]{4,}',
+      ).allMatches(line.toLowerCase()).map((match) => match.group(0)!).toSet();
+      if (!lineWords.any(evidenceWords.contains)) {
+        return false;
+      }
+
+      final lineTokens = parser.parse(line).protectedTokens;
+      final introducedTokens = lineTokens
+          .difference(evidenceTokens)
+          .where(_isRiskyNewToken)
+          .toList(growable: false);
+      if (introducedTokens.isNotEmpty) {
+        return false;
+      }
+    }
+
+    return true;
   }
 }

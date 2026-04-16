@@ -720,31 +720,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFE5F1EC),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Summary',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: const Color(0xFF1E4A43),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _snapshot.summary,
-                  style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
-                ),
-              ],
-            ),
-          ),
+          _buildEnhancedArtifactsSection(context),
           const SizedBox(height: 12),
           _buildProcessorStatusRow(context),
           const SizedBox(height: 16),
@@ -807,6 +783,158 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEnhancedArtifactsSection(BuildContext context) {
+    final summary = _snapshot.summary.trim();
+    final suggestedTitle = _snapshotSuggestedTitle;
+    final actionItems = _snapshotActionItems;
+    final hasSummary = summary.isNotEmpty;
+    final hasSidecars = suggestedTitle != null || actionItems.isNotEmpty;
+
+    if (!hasSummary && !hasSidecars) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (hasSummary) _buildSummaryArtifactCard(context, summary),
+        if (hasSidecars) ...[
+          if (hasSummary) const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cards = <Widget>[
+                if (suggestedTitle != null)
+                  _buildArtifactCard(
+                    context,
+                    title: 'Suggested title',
+                    backgroundColor: const Color(0xFFF6F0E4),
+                    borderColor: const Color(0xFFE0D0AE),
+                    child: SelectableText(
+                      suggestedTitle,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                if (actionItems.isNotEmpty)
+                  _buildArtifactCard(
+                    context,
+                    title: 'Action items',
+                    backgroundColor: const Color(0xFFF4F3FA),
+                    borderColor: const Color(0xFFD8D2EE),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: actionItems
+                          .map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 7,
+                                    height: 7,
+                                    margin: const EdgeInsets.only(
+                                      top: 6,
+                                      right: 10,
+                                    ),
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFF4C5682),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      item,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(height: 1.35),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ),
+              ];
+
+              if (cards.length < 2 || constraints.maxWidth < 760) {
+                return Column(
+                  children: [
+                    for (var index = 0; index < cards.length; index++) ...[
+                      cards[index],
+                      if (index != cards.length - 1) const SizedBox(height: 12),
+                    ],
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var index = 0; index < cards.length; index++) ...[
+                    Expanded(child: cards[index]),
+                    if (index != cards.length - 1) const SizedBox(width: 12),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSummaryArtifactCard(BuildContext context, String summary) {
+    return _buildArtifactCard(
+      context,
+      title: 'Summary',
+      backgroundColor: const Color(0xFFE5F1EC),
+      borderColor: const Color(0xFFC8DED6),
+      child: Text(
+        summary,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.35),
+      ),
+    );
+  }
+
+  Widget _buildArtifactCard(
+    BuildContext context, {
+    required String title,
+    required Color backgroundColor,
+    required Color borderColor,
+    required Widget child,
+  }) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF304745),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          child,
         ],
       ),
     );
@@ -1437,6 +1565,49 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   String _versionLabel(NotebookVersion version) {
     final mode = version.modelMode == ModelMode.localFast ? 'Local' : 'Cloud';
     return '$mode ${_relativeDate(version.createdAt)}';
+  }
+
+  String? get _snapshotSuggestedTitle {
+    final value = _snapshot.artifacts
+        .where((artifact) => artifact.kind == ArtifactKind.title)
+        .map((artifact) => artifact.value.trim())
+        .firstOrNull;
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+    return null;
+  }
+
+  List<String> get _snapshotActionItems {
+    final artifactValue = _snapshot.artifacts
+        .where((artifact) => artifact.kind == ArtifactKind.actionItems)
+        .map((artifact) => artifact.value)
+        .firstOrNull;
+    if (artifactValue == null || artifactValue.trim().isEmpty) {
+      return const [];
+    }
+
+    return artifactValue
+        .split('\n')
+        .map(_normalizeActionItemText)
+        .whereType<String>()
+        .toList(growable: false);
+  }
+
+  String? _normalizeActionItemText(String item) {
+    final trimmed = item.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    final cleaned = trimmed
+        .replaceFirst(RegExp(r'^- \[[ xX]\]\s*'), '')
+        .replaceFirst(RegExp(r'^-\s*'), '')
+        .trim();
+    if (cleaned.isEmpty) {
+      return null;
+    }
+    return cleaned;
   }
 
   TextStyle? _editorTextStyle(ThemeData theme) {

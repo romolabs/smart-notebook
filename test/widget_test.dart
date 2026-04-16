@@ -39,6 +39,76 @@ void main() {
     expect(find.text('Lecture scraps'), findsNWidgets(2));
   });
 
+  testWidgets(
+    'renders trust-first merged output and keeps model artifacts out of visible panes',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final file = File(
+        '${Directory.systemTemp.path}/smart_notebook_widget_trust_first_test.db',
+      );
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+      addTearDown(() {
+        if (file.existsSync()) {
+          file.deleteSync();
+        }
+      });
+
+      const engine = MockEnhancementEngine(
+        localModelAdapter: _TrustFirstLocalModelAdapter(),
+      );
+      final repository = NotebookRepository.forTesting(
+        databasePath: file.path,
+        engine: engine,
+      );
+      addTearDown(repository.close);
+
+      final now = DateTime.now();
+      final note = NotebookNote(
+        id: 'trust-first-note',
+        title: 'Trust-first note',
+        category: 'General',
+        createdAt: now,
+        updatedAt: now,
+        rawContent: [
+          'Project sync',
+          '- call alice at 3',
+          '- budget 1200',
+        ].join('\n'),
+        versions: const [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NotebookWorkspace(
+            engine: engine,
+            repository: repository,
+            settings: AppSettings.defaults,
+            onSaveSettings: (_) async {},
+            initialNotes: [note],
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Formatter: Active'), findsOneWidget);
+      expect(find.text('Verifier: Active'), findsOneWidget);
+      expect(find.text('Capitalize attendee'), findsOneWidget);
+      expect(find.text('Review hints'), findsOneWidget);
+      expect(find.text('Numeric claim detected'), findsOneWidget);
+      expect(find.text('Summary'), findsOneWidget);
+      expect(find.textContaining('call Alice at 3 pm'), findsOneWidget);
+      expect(find.text('Model-only summary should stay sidecar'), findsNothing);
+      expect(find.text('Model-only action list'), findsNothing);
+    },
+  );
+
   testWidgets('ignores stale enhancement responses and keeps latest snapshot', (
     tester,
   ) async {
@@ -179,6 +249,70 @@ class _DelayedEngine extends MockEnhancementEngine {
       changes: const [],
       flags: const [],
       processorStatuses: const [],
+    );
+  }
+}
+
+class _TrustFirstLocalModelAdapter extends LocalModelAdapter {
+  const _TrustFirstLocalModelAdapter();
+
+  @override
+  Future<FormatterProcessorResult> runFormatter({
+    required EnhancementRequest request,
+    required ChampionDraft champion,
+  }) async {
+    return const FormatterProcessorResult(
+      proposal: ModelProposal(
+        lineEdits: [
+          LineEditProposal(
+            lineIndex: 1,
+            replacement: '- call Alice at 3 pm',
+            type: ChangeType.clarity,
+            label: 'Capitalize attendee',
+            description:
+                'Adds a small trust-gated polish to the existing follow-up bullet.',
+          ),
+        ],
+        artifacts: [
+          ArtifactProposal(
+            kind: ArtifactKind.summary,
+            value: 'Model-only summary should stay sidecar',
+            evidenceLineIndexes: [0, 1],
+            label: 'Summary artifact',
+            description: 'This should not replace the engine-authored summary.',
+          ),
+          ArtifactProposal(
+            kind: ArtifactKind.actionItems,
+            value: 'Model-only action list',
+            evidenceLineIndexes: [1],
+            label: 'Action artifact',
+            description: 'This should not be rendered in the enhanced body.',
+          ),
+        ],
+      ),
+      status: ProcessorStatus(
+        kind: ProcessorKind.formatter,
+        state: ProcessorState.completed,
+        label: 'Formatter',
+        detail: 'Returned a bounded trust-first proposal for testing.',
+      ),
+    );
+  }
+
+  @override
+  Future<VerifierProcessorResult> runVerifier({
+    required EnhancementRequest request,
+    required String enhancedText,
+  }) async {
+    return const VerifierProcessorResult(
+      flags: [],
+      changes: [],
+      status: ProcessorStatus(
+        kind: ProcessorKind.verifier,
+        state: ProcessorState.completed,
+        label: 'Verifier',
+        detail: 'Unused in this widget test adapter.',
+      ),
     );
   }
 }

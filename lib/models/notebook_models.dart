@@ -244,6 +244,7 @@ class EnhancementSnapshot {
     required this.summary,
     required this.changes,
     required this.flags,
+    this.artifacts = const [],
     this.processorStatuses = const [],
   });
 
@@ -251,6 +252,7 @@ class EnhancementSnapshot {
   final String summary;
   final List<EnhancementChange> changes;
   final List<VerificationFlag> flags;
+  final List<ArtifactProposal> artifacts;
   final List<ProcessorStatus> processorStatuses;
 }
 
