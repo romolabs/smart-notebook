@@ -119,6 +119,178 @@ class AcceptanceGate {
     );
   }
 
+  ProposalAcceptanceResult evaluateLineEditProposals({
+    required ChampionDraft champion,
+    required ModelProposal proposal,
+  }) {
+    final acceptedLineEdits = <LineEditProposal>[];
+    final acceptedArtifacts = <ArtifactProposal>[];
+    final issues = <AcceptanceIssue>[];
+
+    for (final lineEdit in proposal.lineEdits) {
+      final line = champion.structure.lines
+          .where((candidate) => candidate.index == lineEdit.lineIndex)
+          .firstOrNull;
+      if (line == null) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'unknown_line_${lineEdit.lineIndex}',
+            message:
+                'Proposal referenced a missing line index ${lineEdit.lineIndex}.',
+          ),
+        );
+        continue;
+      }
+
+      final replacement = lineEdit.replacement.trim();
+      if (replacement.isEmpty || replacement.contains('\n')) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'invalid_replacement_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} must stay a single non-empty line.',
+          ),
+        );
+        continue;
+      }
+
+      if ({
+        LineKind.blank,
+        LineKind.code,
+        LineKind.heading,
+        LineKind.tableRow,
+      }.contains(line.kind)) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'protected_line_kind_${lineEdit.lineIndex}',
+            message:
+                'Line ${lineEdit.lineIndex} is a protected ${line.kind.name} line and cannot be model-edited yet.',
+          ),
+        );
+        continue;
+      }
+
+      final replacementNode = parser.parse(replacement).lines.firstOrNull;
+      if (replacementNode == null || replacementNode.kind != line.kind) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'line_kind_changed_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} changed the line kind from ${line.kind.name}.',
+          ),
+        );
+        continue;
+      }
+
+      if (line.kind == LineKind.checkbox &&
+          replacementNode.checkboxChecked != line.checkboxChecked) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'checkbox_state_changed_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} changed checkbox state.',
+          ),
+        );
+        continue;
+      }
+
+      if (line.kind == LineKind.orderedItem &&
+          replacementNode.orderedIndex != line.orderedIndex) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'ordered_index_changed_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} changed the ordered list index.',
+          ),
+        );
+        continue;
+      }
+
+      final sourceTokens = parser
+          .parse(
+            champion.renderedLinesBySourceIndex[line.index] ?? line.sourceLine,
+          )
+          .protectedTokens;
+      final replacementTokens = parser.parse(replacement).protectedTokens;
+      final missingTokens = sourceTokens
+          .where((token) => !replacementTokens.contains(token))
+          .toList(growable: false);
+      if (missingTokens.isNotEmpty) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'missing_tokens_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} dropped protected tokens: ${missingTokens.join(', ')}',
+          ),
+        );
+        continue;
+      }
+
+      final newTokens = replacementTokens
+          .difference(sourceTokens)
+          .where(_isRiskyNewToken)
+          .toList(growable: false);
+      if (newTokens.isNotEmpty) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'new_tokens_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} introduced new protected tokens: ${newTokens.join(', ')}',
+          ),
+        );
+        continue;
+      }
+
+      final originalLength =
+          (champion.renderedLinesBySourceIndex[line.index] ??
+                  line.sourceLine.trimRight())
+              .length;
+      final replacementLength = replacement.length;
+      final lengthDelta = (replacementLength - originalLength).abs();
+      if (lengthDelta > 60 ||
+          replacementLength > (originalLength * 1.8).ceil()) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'edit_too_large_${lineEdit.lineIndex}',
+            message:
+                'Proposal for line ${lineEdit.lineIndex} is too large for a bounded edit.',
+          ),
+        );
+        continue;
+      }
+
+      acceptedLineEdits.add(
+        LineEditProposal(
+          lineIndex: lineEdit.lineIndex,
+          replacement: replacement,
+          type: lineEdit.type,
+          label: lineEdit.label,
+          description: lineEdit.description,
+        ),
+      );
+    }
+
+    for (final artifact in proposal.artifacts) {
+      if (_artifactHasEvidence(artifact, champion.structure)) {
+        acceptedArtifacts.add(artifact);
+      } else {
+        issues.add(
+          AcceptanceIssue(
+            code: 'artifact_missing_evidence_${artifact.kind.name}',
+            message:
+                'Artifact proposal "${artifact.label}" does not cite valid source lines.',
+          ),
+        );
+      }
+    }
+
+    return ProposalAcceptanceResult(
+      acceptedLineEdits: acceptedLineEdits,
+      acceptedArtifacts: acceptedArtifacts,
+      issues: issues,
+    );
+  }
+
   bool _sameLineKinds(NoteStructure left, NoteStructure right) {
     if (left.lines.length != right.lines.length) {
       return false;
@@ -149,5 +321,17 @@ class AcceptanceGate {
     return RegExp(
       r'(^https?://)|(@)|(\b\d+(?:\.\d+)?\b)|(:)|(\.dart$)|(\.md$)|(\.json$)',
     ).hasMatch(token);
+  }
+
+  bool _artifactHasEvidence(
+    ArtifactProposal artifact,
+    NoteStructure structure,
+  ) {
+    if (artifact.evidenceLineIndexes.isEmpty) {
+      return false;
+    }
+
+    final lineIndexes = structure.lines.map((line) => line.index).toSet();
+    return artifact.evidenceLineIndexes.every(lineIndexes.contains);
   }
 }

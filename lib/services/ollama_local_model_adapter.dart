@@ -26,12 +26,12 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
   @override
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
+    required ChampionDraft champion,
   }) async {
     final probe = await _probeRuntime();
     if (!probe.modelAvailable) {
       return FormatterProcessorResult(
-        enhancedText: '',
-        changes: [],
+        proposal: const ModelProposal(),
         status: ProcessorStatus(
           kind: ProcessorKind.formatter,
           state: ProcessorState.unavailable,
@@ -42,31 +42,30 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
     }
 
     try {
-      final payload = await _generateJson(_buildFormatterPrompt(request));
-      final enhancedText =
-          (payload['enhancedText'] as String?)?.trim() ??
-          request.rawContent.trim();
-      final stabilizedText = _stabilizeEnhancedText(
-        rawContent: request.rawContent,
-        enhancedText: enhancedText,
+      final payload = await _generateJson(
+        _buildFormatterPrompt(request: request, champion: champion),
       );
-      final changeItems = _parseChangeItems(payload['changeItems']);
+      final proposal = _parseModelProposal(payload);
+      final legacyWholeNoteResponse =
+          _readString(payload['enhancedText'])?.trim().isNotEmpty == true;
+      final proposalCount =
+          proposal.lineEdits.length + proposal.artifacts.length;
       return FormatterProcessorResult(
-        enhancedText: stabilizedText.isEmpty
-            ? request.rawContent.trim()
-            : stabilizedText,
-        changes: changeItems,
+        proposal: proposal,
         status: ProcessorStatus(
           kind: ProcessorKind.formatter,
           state: ProcessorState.completed,
           label: 'Formatter',
-          detail: 'Processed with Ollama $model.',
+          detail: proposalCount > 0
+              ? 'Processed with Ollama $model and parsed $proposalCount bounded proposal item(s).'
+              : legacyWholeNoteResponse
+              ? 'Processed with Ollama $model, but ignored whole-note output and kept an empty bounded proposal.'
+              : 'Processed with Ollama $model and returned no bounded proposal items.',
         ),
       );
     } catch (error) {
       return FormatterProcessorResult(
-        enhancedText: request.rawContent.trim(),
-        changes: const [],
+        proposal: const ModelProposal(),
         status: ProcessorStatus(
           kind: ProcessorKind.formatter,
           state: ProcessorState.failed,
@@ -239,7 +238,10 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
     }
   }
 
-  String _buildFormatterPrompt(EnhancementRequest request) {
+  String _buildFormatterPrompt({
+    required EnhancementRequest request,
+    required ChampionDraft champion,
+  }) {
     final enabled = <String>[
       if (request.toggles.spelling) 'spelling',
       if (request.toggles.formatting) 'formatting',
@@ -249,62 +251,43 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
     return '''
 Return one JSON object only.
 
-Role: formatter for Smart Notebook.
-Goal: improve only $enabled.
+Role: bounded formatter proposal generator for Smart Notebook.
+Goal: propose only the safest single-line edits for $enabled against the champion draft.
 
 Rules:
-- Preserve meaning and original order.
+- Do not return the final enhanced note.
+- Return only bounded proposals against existing champion draft line indexes.
+- Preserve meaning, line order, block order, and structure.
 - Make the smallest safe edits.
 - Do not invent facts, names, dates, numbers, tasks, or sources.
-- Preserve line breaks, list structure, and headings when they already exist.
-- Do not collapse multiple lines into one paragraph.
-- Keep numbered lists as numbered lists.
-- If the note is already clear, return it unchanged.
-- Keep at most 3 changeItems.
-- Each description must be short.
+- Do not propose edits for blank, code, heading, or tableRow lines.
+- Each replacement must be exactly one non-empty line with no newline characters.
+- Keep numbered lists as numbered lists and preserve checkbox state.
+- If no safe edit is needed, return empty arrays.
+- Keep at most 3 lineEdits.
+- Keep labels and descriptions short.
 
 JSON schema:
-{"enhancedText":"string","changeItems":[{"type":"spelling|formatting|clarity","label":"string","description":"string"}]}
+{"lineEdits":[{"lineIndex":0,"replacement":"string","type":"spelling|formatting|clarity","label":"string","description":"string"}],"artifacts":[]}
 
-Raw note between <note> tags.
-<note>
-${request.rawContent}
-</note>
+Champion draft lines between <champion> tags.
+Use the exact lineIndex values shown below.
+<champion>
+${_buildIndexedChampionLines(champion)}
+</champion>
 ''';
   }
 
-  String _stabilizeEnhancedText({
-    required String rawContent,
-    required String enhancedText,
-  }) {
-    var result = enhancedText.trim();
-    if (result.isEmpty) {
-      return rawContent.trim();
-    }
-
-    final rawLineCount = '\n'.allMatches(rawContent).length + 1;
-    final enhancedLineCount = '\n'.allMatches(result).length + 1;
-
-    if (rawLineCount > 2 && enhancedLineCount == 1) {
-      result = result
-          .replaceAllMapped(
-            RegExp(r'\s+(\d+\.)\s+'),
-            (match) => '\n${match.group(1)} ',
-          )
-          .replaceAllMapped(
-            RegExp(r'\s+(Title:)'),
-            (match) => '\n${match.group(1)}',
-          );
-    }
-
-    result = result
-        .replaceAllMapped(RegExp(r'^(\d+\.)\s*', multiLine: true), (match) {
-          return '${match.group(1)} ';
+  String _buildIndexedChampionLines(ChampionDraft champion) {
+    return champion.structure.lines
+        .map((line) {
+          final rendered =
+              champion.renderedLinesBySourceIndex[line.index] ??
+              line.sourceLine.trimRight();
+          final display = rendered.isEmpty ? '<BLANK>' : rendered;
+          return '${line.index}|${line.kind.name}|$display';
         })
-        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-        .trim();
-
-    return result;
+        .join('\n');
   }
 
   String _buildVerifierPrompt({
@@ -341,38 +324,172 @@ $enhancedText
 ''';
   }
 
+  ModelProposal _parseModelProposal(Object? value) {
+    final payload = _extractProposalPayload(value);
+    if (payload == null) {
+      return const ModelProposal();
+    }
+
+    return ModelProposal(
+      lineEdits: _parseLineEditProposals(
+        payload['lineEdits'] ??
+            payload['lineEditProposals'] ??
+            payload['line_edits'] ??
+            payload['edits'],
+      ),
+      artifacts: _parseArtifactProposals(
+        payload['artifacts'] ??
+            payload['artifactProposals'] ??
+            payload['artifact_proposals'],
+      ),
+    );
+  }
+
+  Map<String, dynamic>? _extractProposalPayload(Object? value) {
+    final map = _asObjectMap(value);
+    if (map == null) {
+      return null;
+    }
+
+    final nested =
+        _asObjectMap(map['proposal']) ?? _asObjectMap(map['modelProposal']);
+    if (nested != null) {
+      return nested;
+    }
+
+    return map;
+  }
+
+  List<LineEditProposal> _parseLineEditProposals(Object? value) {
+    final rawItems = _asList(value);
+    return rawItems
+        .map(_parseLineEditProposal)
+        .whereType<LineEditProposal>()
+        .toList(growable: false);
+  }
+
+  LineEditProposal? _parseLineEditProposal(Object? value) {
+    final map = _asObjectMap(value);
+    if (map == null) {
+      return null;
+    }
+
+    final lineIndex = _parseLineIndex(
+      map['lineIndex'] ?? map['line'] ?? map['index'] ?? map['line_number'],
+    );
+    final replacement =
+        (_readString(
+                  map['replacement'] ??
+                      map['text'] ??
+                      map['value'] ??
+                      map['replacementLine'],
+                ) ??
+                '')
+            .trim();
+
+    if (lineIndex == null ||
+        replacement.isEmpty ||
+        replacement.contains('\n') ||
+        replacement.contains('\r')) {
+      return null;
+    }
+
+    return LineEditProposal(
+      lineIndex: lineIndex,
+      replacement: replacement,
+      type: _parseChangeType(_readString(map['type'] ?? map['changeType'])),
+      label: _readString(map['label']) ?? 'Model edit for line $lineIndex',
+      description:
+          _readString(map['description']) ?? 'Model-suggested bounded edit.',
+    );
+  }
+
+  List<ArtifactProposal> _parseArtifactProposals(Object? value) {
+    final rawItems = _asList(value);
+    return rawItems
+        .map(_parseArtifactProposal)
+        .whereType<ArtifactProposal>()
+        .toList(growable: false);
+  }
+
+  ArtifactProposal? _parseArtifactProposal(Object? value) {
+    final map = _asObjectMap(value);
+    if (map == null) {
+      return null;
+    }
+
+    final kind = _parseArtifactKind(
+      _readString(map['kind'] ?? map['type'] ?? map['artifactKind']),
+    );
+    final proposalValue =
+        (_readString(map['value'] ?? map['text'] ?? map['content']) ?? '')
+            .trim();
+    final evidenceLineIndexes = _parseIntList(
+      map['evidenceLineIndexes'] ??
+          map['evidenceLines'] ??
+          map['evidence'] ??
+          map['lineIndexes'],
+    );
+
+    if (kind == null || proposalValue.isEmpty) {
+      return null;
+    }
+
+    return ArtifactProposal(
+      kind: kind,
+      value: proposalValue,
+      evidenceLineIndexes: evidenceLineIndexes,
+      label: _readString(map['label']) ?? 'Model artifact',
+      description:
+          _readString(map['description']) ??
+          'Model-suggested sidecar artifact.',
+    );
+  }
+
   List<EnhancementChange> _parseChangeItems(Object? value) {
-    final rawItems = value as List<dynamic>? ?? const [];
+    final rawItems = _asList(value);
     return rawItems
         .map((item) {
-          final map = item as Map<String, dynamic>;
+          final map = _asObjectMap(item);
+          if (map == null) {
+            return null;
+          }
           return EnhancementChange(
-            type: _parseChangeType(map['type'] as String?),
-            label: map['label'] as String? ?? 'Model change',
+            type: _parseChangeType(
+              _readString(map['type'] ?? map['changeType']),
+            ),
+            label: _readString(map['label']) ?? 'Model change',
             description:
-                map['description'] as String? ?? 'Model-suggested edit.',
+                _readString(map['description']) ?? 'Model-suggested edit.',
           );
         })
+        .whereType<EnhancementChange>()
         .toList(growable: false);
   }
 
   List<VerificationFlag> _parseVerificationFlags(Object? value) {
-    final rawItems = value as List<dynamic>? ?? const [];
+    final rawItems = _asList(value);
     return rawItems
         .map((item) {
-          final map = item as Map<String, dynamic>;
+          final map = _asObjectMap(item);
+          if (map == null) {
+            return null;
+          }
           return VerificationFlag(
-            status: _parseVerificationStatus(map['status'] as String?),
-            claimText: map['claimText'] as String? ?? 'Potential factual claim',
-            note: map['note'] as String? ?? 'Review recommended.',
-            confidence: (map['confidence'] as num?)?.toDouble() ?? 0.5,
+            status: _parseVerificationStatus(_readString(map['status'])),
+            claimText:
+                _readString(map['claimText'] ?? map['claim']) ??
+                'Potential factual claim',
+            note: _readString(map['note']) ?? 'Review recommended.',
+            confidence: _parseDouble(map['confidence']) ?? 0.5,
           );
         })
+        .whereType<VerificationFlag>()
         .toList(growable: false);
   }
 
   ChangeType _parseChangeType(String? value) {
-    return switch (value) {
+    return switch (value?.trim().toLowerCase()) {
       'spelling' => ChangeType.spelling,
       'formatting' => ChangeType.formatting,
       'clarity' => ChangeType.clarity,
@@ -381,11 +498,100 @@ $enhancedText
     };
   }
 
+  ArtifactKind? _parseArtifactKind(String? value) {
+    return switch (value?.trim().toLowerCase()) {
+      'title' => ArtifactKind.title,
+      'summary' => ArtifactKind.summary,
+      'actionitems' ||
+      'action items' ||
+      'action_items' ||
+      'action-items' => ArtifactKind.actionItems,
+      _ => null,
+    };
+  }
+
   VerificationStatus _parseVerificationStatus(String? value) {
-    return switch (value) {
-      'needsReview' => VerificationStatus.needsReview,
+    return switch (value?.trim().toLowerCase()) {
+      'needsreview' ||
+      'needs_review' ||
+      'needs-review' => VerificationStatus.needsReview,
       _ => VerificationStatus.warning,
     };
+  }
+
+  Map<String, dynamic>? _asObjectMap(Object? value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map(
+        (key, entryValue) => MapEntry(key.toString(), entryValue),
+      );
+    }
+    return null;
+  }
+
+  List<dynamic> _asList(Object? value) {
+    if (value is List<dynamic>) {
+      return value;
+    }
+    if (value == null) {
+      return const [];
+    }
+    return [value];
+  }
+
+  String? _readString(Object? value) {
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (value is num || value is bool) {
+      return value.toString();
+    }
+    return null;
+  }
+
+  int? _parseLineIndex(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    final raw = _readString(value);
+    if (raw == null) {
+      return null;
+    }
+    final match = RegExp(r'-?\d+').firstMatch(raw);
+    return match == null ? null : int.tryParse(match.group(0)!);
+  }
+
+  List<int> _parseIntList(Object? value) {
+    if (value is List<dynamic>) {
+      return value
+          .map(_parseLineIndex)
+          .whereType<int>()
+          .toList(growable: false);
+    }
+
+    final raw = _readString(value);
+    if (raw == null) {
+      return const [];
+    }
+
+    return RegExp(r'-?\d+')
+        .allMatches(raw)
+        .map((match) => int.parse(match.group(0)!))
+        .toList(growable: false);
+  }
+
+  double? _parseDouble(Object? value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    final raw = _readString(value);
+    return raw == null ? null : double.tryParse(raw);
   }
 }
 

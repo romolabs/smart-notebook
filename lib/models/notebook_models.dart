@@ -40,6 +40,8 @@ enum BlockKind {
 
 enum AcceptanceDecision { accepted, rejected }
 
+enum ArtifactKind { title, summary, actionItems }
+
 class AppSettings {
   const AppSettings({required this.ollamaBaseUrl, required this.ollamaModel});
 
@@ -358,11 +360,13 @@ class ChampionDraft {
     required this.text,
     required this.structure,
     required this.changes,
+    required this.renderedLinesBySourceIndex,
   });
 
   final String text;
   final NoteStructure structure;
   final List<EnhancementChange> changes;
+  final Map<int, String> renderedLinesBySourceIndex;
 }
 
 class AcceptanceIssue {
@@ -384,6 +388,57 @@ class AcceptanceReport {
   final String? acceptedText;
 
   bool get accepted => decision == AcceptanceDecision.accepted;
+}
+
+class LineEditProposal {
+  const LineEditProposal({
+    required this.lineIndex,
+    required this.replacement,
+    required this.type,
+    required this.label,
+    required this.description,
+  });
+
+  final int lineIndex;
+  final String replacement;
+  final ChangeType type;
+  final String label;
+  final String description;
+}
+
+class ArtifactProposal {
+  const ArtifactProposal({
+    required this.kind,
+    required this.value,
+    required this.evidenceLineIndexes,
+    required this.label,
+    required this.description,
+  });
+
+  final ArtifactKind kind;
+  final String value;
+  final List<int> evidenceLineIndexes;
+  final String label;
+  final String description;
+}
+
+class ModelProposal {
+  const ModelProposal({this.lineEdits = const [], this.artifacts = const []});
+
+  final List<LineEditProposal> lineEdits;
+  final List<ArtifactProposal> artifacts;
+}
+
+class ProposalAcceptanceResult {
+  const ProposalAcceptanceResult({
+    this.acceptedLineEdits = const [],
+    this.acceptedArtifacts = const [],
+    this.issues = const [],
+  });
+
+  final List<LineEditProposal> acceptedLineEdits;
+  final List<ArtifactProposal> acceptedArtifacts;
+  final List<AcceptanceIssue> issues;
 }
 
 class ProcessorStatus {

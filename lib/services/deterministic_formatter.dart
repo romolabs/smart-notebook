@@ -9,6 +9,7 @@ class DeterministicFormatter {
   }) {
     final renderedBlocks = <String>[];
     final changes = <EnhancementChange>[];
+    final renderedLinesBySourceIndex = <int, String>{};
     var changedSpelling = false;
     var changedFormatting = false;
     var changedClarity = false;
@@ -17,6 +18,7 @@ class DeterministicFormatter {
       final renderedLines = block.lines
           .map((line) {
             var rendered = _renderLine(line, toggles: toggles);
+            renderedLinesBySourceIndex[line.index] = rendered;
             if (toggles.spelling && rendered != line.sourceLine.trimRight()) {
               changedSpelling = true;
             }
@@ -67,6 +69,7 @@ class DeterministicFormatter {
       text: renderedBlocks.join('\n\n').trim(),
       structure: structure,
       changes: changes,
+      renderedLinesBySourceIndex: renderedLinesBySourceIndex,
     );
   }
 

@@ -2,6 +2,7 @@ import '../models/notebook_models.dart';
 import 'acceptance_gate.dart';
 import 'deterministic_formatter.dart';
 import 'note_parser.dart';
+import 'proposal_merger.dart';
 
 abstract class EnhancementEngine {
   Future<EnhancementSnapshot> process(EnhancementRequest request);
@@ -9,13 +10,11 @@ abstract class EnhancementEngine {
 
 class FormatterProcessorResult {
   const FormatterProcessorResult({
-    required this.enhancedText,
-    required this.changes,
+    required this.proposal,
     required this.status,
   });
 
-  final String enhancedText;
-  final List<EnhancementChange> changes;
+  final ModelProposal proposal;
   final ProcessorStatus status;
 }
 
@@ -36,6 +35,7 @@ abstract class LocalModelAdapter {
 
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
+    required ChampionDraft champion,
   });
 
   Future<VerifierProcessorResult> runVerifier({
@@ -50,12 +50,14 @@ class MockEnhancementEngine implements EnhancementEngine {
     this.parser = const NoteParser(),
     this.formatter = const DeterministicFormatter(),
     this.acceptanceGate = const AcceptanceGate(),
+    this.proposalMerger = const ProposalMerger(),
   });
 
   final LocalModelAdapter localModelAdapter;
   final NoteParser parser;
   final DeterministicFormatter formatter;
   final AcceptanceGate acceptanceGate;
+  final ProposalMerger proposalMerger;
 
   @override
   Future<EnhancementSnapshot> process(EnhancementRequest request) async {
@@ -84,15 +86,23 @@ class MockEnhancementEngine implements EnhancementEngine {
       await _buildFormatterStatus(
         request: request,
         champion: champion,
-        onAcceptedText: (acceptedText, modelChanges) {
-          final acceptedStructure = parser.parse(acceptedText);
-          final acceptedDraft = formatter.buildChampionDraft(
-            acceptedStructure,
-            toggles: request.toggles,
+        onAcceptedProposals: (acceptance) {
+          enhancedText = proposalMerger.merge(
+            champion: champion,
+            acceptedLineEdits: acceptance.acceptedLineEdits,
           );
-          enhancedText = acceptedDraft.text;
-          _mergeChanges(changes, acceptedDraft.changes);
-          _mergeChanges(changes, modelChanges);
+          _mergeChanges(
+            changes,
+            acceptance.acceptedLineEdits
+                .map(
+                  (edit) => EnhancementChange(
+                    type: edit.type,
+                    label: edit.label,
+                    description: edit.description,
+                  ),
+                )
+                .toList(growable: false),
+          );
         },
       ),
     );
@@ -129,15 +139,10 @@ class MockEnhancementEngine implements EnhancementEngine {
     );
     final verification = _buildVerificationResult(request, normalizedRaw);
 
-    final changes = <EnhancementChange>[
-      ...champion.changes,
-      ...verification.changes,
-    ];
-
     return EnhancementSnapshot(
       enhancedContent: champion.text,
       summary: _buildSummary(structure.note.analysisText),
-      changes: changes,
+      changes: [...champion.changes, ...verification.changes],
       flags: verification.flags,
       processorStatuses: [
         if (request.toggles.spelling ||
@@ -165,11 +170,8 @@ class MockEnhancementEngine implements EnhancementEngine {
   Future<ProcessorStatus> _buildFormatterStatus({
     required EnhancementRequest request,
     required ChampionDraft champion,
-    required void Function(
-      String acceptedText,
-      List<EnhancementChange> modelChanges,
-    )
-    onAcceptedText,
+    required void Function(ProposalAcceptanceResult acceptance)
+    onAcceptedProposals,
   }) async {
     final formatterEnabled =
         request.toggles.spelling ||
@@ -194,7 +196,10 @@ class MockEnhancementEngine implements EnhancementEngine {
       );
     }
 
-    final modelResult = await localModelAdapter.runFormatter(request: request);
+    final modelResult = await localModelAdapter.runFormatter(
+      request: request,
+      champion: champion,
+    );
     if (modelResult.status.state != ProcessorState.completed) {
       return ProcessorStatus(
         kind: ProcessorKind.formatter,
@@ -205,30 +210,33 @@ class MockEnhancementEngine implements EnhancementEngine {
       );
     }
 
-    final acceptance = acceptanceGate.evaluateFormatterCandidate(
+    final acceptance = acceptanceGate.evaluateLineEditProposals(
       champion: champion,
-      candidateText: modelResult.enhancedText,
+      proposal: modelResult.proposal,
     );
-    if (!acceptance.accepted) {
+    if (acceptance.acceptedLineEdits.isEmpty) {
       final reason = acceptance.issues.isEmpty
-          ? 'the trust gate rejected the model draft.'
+          ? 'the trust gate rejected every proposed edit.'
           : acceptance.issues.first.message;
       return ProcessorStatus(
         kind: ProcessorKind.formatter,
         state: ProcessorState.completed,
         label: 'Formatter',
         detail:
-            'Built the deterministic champion draft locally. Model draft was rejected because $reason',
+            'Built the deterministic champion draft locally. No bounded model edits were accepted because $reason',
       );
     }
 
-    onAcceptedText(acceptance.acceptedText!, modelResult.changes);
-    return const ProcessorStatus(
+    onAcceptedProposals(acceptance);
+    final rejectedCount =
+        modelResult.proposal.lineEdits.length -
+        acceptance.acceptedLineEdits.length;
+    return ProcessorStatus(
       kind: ProcessorKind.formatter,
       state: ProcessorState.completed,
       label: 'Formatter',
       detail:
-          'Built the deterministic champion draft and merged a trust-gated local proposal through the engine renderer.',
+          'Built the deterministic champion draft and merged ${acceptance.acceptedLineEdits.length} trust-gated bounded edit(s) through the engine renderer.${rejectedCount > 0 ? ' Rejected $rejectedCount edit(s) that did not pass the gate.' : ''}',
     );
   }
 
@@ -394,10 +402,10 @@ class UnavailableLocalModelAdapter extends LocalModelAdapter {
   @override
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
+    required ChampionDraft champion,
   }) async {
     return const FormatterProcessorResult(
-      enhancedText: '',
-      changes: [],
+      proposal: ModelProposal(),
       status: ProcessorStatus(
         kind: ProcessorKind.formatter,
         state: ProcessorState.unavailable,
