@@ -42,6 +42,30 @@ enum AcceptanceDecision { accepted, rejected }
 
 enum ArtifactKind { title, summary, actionItems }
 
+enum SpanKind {
+  prose,
+  inlineMathTex,
+  inlineMathUnicode,
+  blockMathTex,
+  equationRun,
+  latexCommand,
+  unicodeMathRun,
+  code,
+}
+
+enum ProtectionMode { editable, symbolLocked, layoutLocked, exactLocked }
+
+enum NoteRiskLevel { low, medium, high }
+
+enum RouteCapability {
+  lineEdits,
+  titleSuggestion,
+  summarySuggestion,
+  actionItems,
+}
+
+enum RouteExecution { local, deterministicOnly, deferredCloud }
+
 class AppSettings {
   const AppSettings({required this.ollamaBaseUrl, required this.ollamaModel});
 
@@ -244,6 +268,7 @@ class EnhancementSnapshot {
     required this.summary,
     required this.changes,
     required this.flags,
+    required this.routePlan,
     this.artifacts = const [],
     this.processorStatuses = const [],
   });
@@ -252,6 +277,7 @@ class EnhancementSnapshot {
   final String summary;
   final List<EnhancementChange> changes;
   final List<VerificationFlag> flags;
+  final RoutePlan routePlan;
   final List<ArtifactProposal> artifacts;
   final List<ProcessorStatus> processorStatuses;
 }
@@ -275,6 +301,7 @@ class LineNode {
     required this.trimmed,
     required this.kind,
     required this.indent,
+    this.protectedSpans = const [],
     this.headingLevel,
     this.orderedIndex,
     this.checkboxChecked,
@@ -287,6 +314,7 @@ class LineNode {
   final String trimmed;
   final LineKind kind;
   final int indent;
+  final List<ProtectedSpan> protectedSpans;
   final int? headingLevel;
   final int? orderedIndex;
   final bool? checkboxChecked;
@@ -294,6 +322,13 @@ class LineNode {
   final String? value;
 
   bool get isBlank => kind == LineKind.blank;
+  bool get hasProtectedContent => protectedSpans.isNotEmpty;
+  bool get isEditable =>
+      !isBlank &&
+      !hasProtectedContent &&
+      kind != LineKind.code &&
+      kind != LineKind.heading &&
+      kind != LineKind.tableRow;
 }
 
 class BlockNode {
@@ -325,6 +360,11 @@ class StructureMetrics {
     required this.codeLineCount,
     required this.keyValueCount,
     required this.tableRowCount,
+    required this.protectedSpanCount,
+    required this.mathLineCount,
+    required this.lockedLineCount,
+    required this.mathDensity,
+    required this.lockedLineRatio,
   });
 
   final int lineCount;
@@ -339,6 +379,11 @@ class StructureMetrics {
   final int codeLineCount;
   final int keyValueCount;
   final int tableRowCount;
+  final int protectedSpanCount;
+  final int mathLineCount;
+  final int lockedLineCount;
+  final double mathDensity;
+  final double lockedLineRatio;
 }
 
 class NoteStructure {
@@ -348,6 +393,7 @@ class NoteStructure {
     required this.blocks,
     required this.metrics,
     required this.protectedTokens,
+    required this.protectedSpans,
   });
 
   final NormalizedNote note;
@@ -355,6 +401,7 @@ class NoteStructure {
   final List<BlockNode> blocks;
   final StructureMetrics metrics;
   final Set<String> protectedTokens;
+  final List<ProtectedSpan> protectedSpans;
 }
 
 class ChampionDraft {
@@ -363,12 +410,34 @@ class ChampionDraft {
     required this.structure,
     required this.changes,
     required this.renderedLinesBySourceIndex,
+    this.routePlan,
   });
 
   final String text;
   final NoteStructure structure;
   final List<EnhancementChange> changes;
   final Map<int, String> renderedLinesBySourceIndex;
+  final RoutePlan? routePlan;
+}
+
+class ProtectedSpan {
+  const ProtectedSpan({
+    required this.id,
+    required this.lineIndex,
+    required this.start,
+    required this.end,
+    required this.kind,
+    required this.protectionMode,
+    required this.rawText,
+  });
+
+  final String id;
+  final int lineIndex;
+  final int start;
+  final int end;
+  final SpanKind kind;
+  final ProtectionMode protectionMode;
+  final String rawText;
 }
 
 class AcceptanceIssue {
@@ -441,6 +510,38 @@ class ProposalAcceptanceResult {
   final List<LineEditProposal> acceptedLineEdits;
   final List<ArtifactProposal> acceptedArtifacts;
   final List<AcceptanceIssue> issues;
+}
+
+class RoutePlan {
+  const RoutePlan({
+    required this.execution,
+    required this.riskLevel,
+    required this.summary,
+    this.allowedCapabilities = const [],
+    this.editableLineIndexes = const [],
+    this.mathLineIndexes = const [],
+    this.mathDensity = 0,
+    this.lockedLineRatio = 0,
+  });
+
+  final RouteExecution execution;
+  final NoteRiskLevel riskLevel;
+  final String summary;
+  final List<RouteCapability> allowedCapabilities;
+  final List<int> editableLineIndexes;
+  final List<int> mathLineIndexes;
+  final double mathDensity;
+  final double lockedLineRatio;
+
+  bool get allowsLocalModel =>
+      execution == RouteExecution.local && allowedCapabilities.isNotEmpty;
+
+  bool get allowsLineEdits =>
+      allowedCapabilities.contains(RouteCapability.lineEdits);
+
+  bool get allowsArtifacts => allowedCapabilities.any(
+    (capability) => capability != RouteCapability.lineEdits,
+  );
 }
 
 class ProcessorStatus {

@@ -75,6 +75,9 @@ class DeterministicFormatter {
 
   String _renderLine(LineNode line, {required ProcessorToggles toggles}) {
     var content = line.sourceLine.trimRight();
+    if (line.hasProtectedContent) {
+      return content;
+    }
     if (toggles.spelling) {
       content = _applyClosedSpelling(content);
     }

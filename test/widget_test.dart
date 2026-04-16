@@ -224,6 +224,13 @@ class _DelayedEngine extends MockEnhancementEngine {
       summary: 'Summary: ${request.rawContent}',
       changes: const [],
       flags: const [],
+      routePlan: const RoutePlan(
+        execution: RouteExecution.local,
+        riskLevel: NoteRiskLevel.low,
+        summary: 'Test route plan for delayed engine.',
+        allowedCapabilities: [RouteCapability.lineEdits],
+        editableLineIndexes: [0],
+      ),
       processorStatuses: const [
         ProcessorStatus(
           kind: ProcessorKind.formatter,
@@ -248,6 +255,13 @@ class _DelayedEngine extends MockEnhancementEngine {
       summary: 'Summary: ${request.rawContent}',
       changes: const [],
       flags: const [],
+      routePlan: const RoutePlan(
+        execution: RouteExecution.local,
+        riskLevel: NoteRiskLevel.low,
+        summary: 'Test route plan for delayed engine.',
+        allowedCapabilities: [RouteCapability.lineEdits],
+        editableLineIndexes: [0],
+      ),
       processorStatuses: const [],
     );
   }
@@ -260,6 +274,7 @@ class _TrustFirstLocalModelAdapter extends LocalModelAdapter {
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
     required ChampionDraft champion,
+    required RoutePlan routePlan,
   }) async {
     return const FormatterProcessorResult(
       proposal: ModelProposal(

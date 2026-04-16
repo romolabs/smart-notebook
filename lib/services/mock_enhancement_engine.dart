@@ -4,6 +4,7 @@ import 'artifact_builder.dart';
 import 'deterministic_formatter.dart';
 import 'note_parser.dart';
 import 'proposal_merger.dart';
+import 'route_planner.dart';
 
 abstract class EnhancementEngine {
   Future<EnhancementSnapshot> process(EnhancementRequest request);
@@ -37,6 +38,7 @@ abstract class LocalModelAdapter {
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
     required ChampionDraft champion,
+    required RoutePlan routePlan,
   });
 
   Future<VerifierProcessorResult> runVerifier({
@@ -53,6 +55,7 @@ class MockEnhancementEngine implements EnhancementEngine {
     this.acceptanceGate = const AcceptanceGate(),
     this.artifactBuilder = const ArtifactBuilder(),
     this.proposalMerger = const ProposalMerger(),
+    this.routePlanner = const RoutePlanner(),
   });
 
   final LocalModelAdapter localModelAdapter;
@@ -61,6 +64,7 @@ class MockEnhancementEngine implements EnhancementEngine {
   final AcceptanceGate acceptanceGate;
   final ArtifactBuilder artifactBuilder;
   final ProposalMerger proposalMerger;
+  final RoutePlanner routePlanner;
 
   @override
   Future<EnhancementSnapshot> process(EnhancementRequest request) async {
@@ -79,6 +83,11 @@ class MockEnhancementEngine implements EnhancementEngine {
       structure,
       toggles: request.toggles,
     );
+    final routePlan = routePlanner.build(
+      request: request,
+      structure: structure,
+      champion: champion,
+    );
     final artifacts = artifactBuilder.buildDeterministicArtifacts(
       structure: structure,
       champion: champion,
@@ -93,6 +102,7 @@ class MockEnhancementEngine implements EnhancementEngine {
       await _buildFormatterStatus(
         request: request,
         champion: champion,
+        routePlan: routePlan,
         onAcceptedProposals: (acceptance) {
           enhancedText = proposalMerger.merge(
             champion: champion,
@@ -125,6 +135,7 @@ class MockEnhancementEngine implements EnhancementEngine {
       summary: _summaryFromArtifacts(artifacts, structure.note.analysisText),
       changes: changes,
       flags: flags,
+      routePlan: routePlan,
       artifacts: artifacts,
       processorStatuses: processorStatuses,
     );
@@ -146,6 +157,11 @@ class MockEnhancementEngine implements EnhancementEngine {
       structure,
       toggles: request.toggles,
     );
+    final routePlan = routePlanner.build(
+      request: request,
+      structure: structure,
+      champion: champion,
+    );
     final verification = _buildVerificationResult(request, normalizedRaw);
     final artifacts = artifactBuilder.buildDeterministicArtifacts(
       structure: structure,
@@ -157,6 +173,7 @@ class MockEnhancementEngine implements EnhancementEngine {
       summary: _summaryFromArtifacts(artifacts, structure.note.analysisText),
       changes: [...champion.changes, ...verification.changes],
       flags: verification.flags,
+      routePlan: routePlan,
       artifacts: artifacts,
       processorStatuses: [
         if (request.toggles.spelling ||
@@ -184,6 +201,7 @@ class MockEnhancementEngine implements EnhancementEngine {
   Future<ProcessorStatus> _buildFormatterStatus({
     required EnhancementRequest request,
     required ChampionDraft champion,
+    required RoutePlan routePlan,
     required void Function(ProposalAcceptanceResult acceptance)
     onAcceptedProposals,
   }) async {
@@ -200,19 +218,28 @@ class MockEnhancementEngine implements EnhancementEngine {
       );
     }
 
-    if (request.modelMode != ModelMode.localFast) {
-      return const ProcessorStatus(
+    if (routePlan.execution == RouteExecution.deferredCloud) {
+      return ProcessorStatus(
         kind: ProcessorKind.formatter,
         state: ProcessorState.unavailable,
         label: 'Formatter',
-        detail:
-            'Cloud proposal routing is not wired yet, so the engine kept the deterministic champion draft.',
+        detail: routePlan.summary,
+      );
+    }
+
+    if (!routePlan.allowsLocalModel) {
+      return ProcessorStatus(
+        kind: ProcessorKind.formatter,
+        state: ProcessorState.unavailable,
+        label: 'Formatter',
+        detail: routePlan.summary,
       );
     }
 
     final modelResult = await localModelAdapter.runFormatter(
       request: request,
       champion: champion,
+      routePlan: routePlan,
     );
     if (modelResult.status.state != ProcessorState.completed) {
       return ProcessorStatus(
@@ -224,9 +251,13 @@ class MockEnhancementEngine implements EnhancementEngine {
       );
     }
 
+    final filteredProposal = _filterProposalByRoute(
+      modelResult.proposal,
+      routePlan: routePlan,
+    );
     final acceptance = acceptanceGate.evaluateLineEditProposals(
       champion: champion,
-      proposal: modelResult.proposal,
+      proposal: filteredProposal,
     );
     if (acceptance.acceptedLineEdits.isEmpty &&
         acceptance.acceptedArtifacts.isEmpty) {
@@ -244,9 +275,9 @@ class MockEnhancementEngine implements EnhancementEngine {
 
     onAcceptedProposals(acceptance);
     final rejectedCount =
-        (modelResult.proposal.lineEdits.length -
+        (filteredProposal.lineEdits.length -
             acceptance.acceptedLineEdits.length) +
-        (modelResult.proposal.artifacts.length -
+        (filteredProposal.artifacts.length -
             acceptance.acceptedArtifacts.length);
     final acceptedCount =
         acceptance.acceptedLineEdits.length +
@@ -329,6 +360,38 @@ class MockEnhancementEngine implements EnhancementEngine {
     }
   }
 
+  ModelProposal _filterProposalByRoute(
+    ModelProposal proposal, {
+    required RoutePlan routePlan,
+  }) {
+    final lineEdits = routePlan.allowsLineEdits
+        ? proposal.lineEdits
+              .where(
+                (edit) =>
+                    routePlan.editableLineIndexes.contains(edit.lineIndex),
+              )
+              .toList(growable: false)
+        : const <LineEditProposal>[];
+
+    final artifacts = proposal.artifacts
+        .where((artifact) {
+          return switch (artifact.kind) {
+            ArtifactKind.title => routePlan.allowedCapabilities.contains(
+              RouteCapability.titleSuggestion,
+            ),
+            ArtifactKind.summary => routePlan.allowedCapabilities.contains(
+              RouteCapability.summarySuggestion,
+            ),
+            ArtifactKind.actionItems => routePlan.allowedCapabilities.contains(
+              RouteCapability.actionItems,
+            ),
+          };
+        })
+        .toList(growable: false);
+
+    return ModelProposal(lineEdits: lineEdits, artifacts: artifacts);
+  }
+
   void _mergeArtifacts(
     List<ArtifactProposal> destination,
     List<ArtifactProposal> incoming,
@@ -352,6 +415,11 @@ class MockEnhancementEngine implements EnhancementEngine {
           'Start writing in the raw pane to see structure, cleanup, and review hints.',
       changes: [],
       flags: [],
+      routePlan: RoutePlan(
+        execution: RouteExecution.deterministicOnly,
+        riskLevel: NoteRiskLevel.low,
+        summary: 'Waiting for note content.',
+      ),
       artifacts: [],
       processorStatuses: [
         ProcessorStatus(
@@ -447,6 +515,7 @@ class UnavailableLocalModelAdapter extends LocalModelAdapter {
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
     required ChampionDraft champion,
+    required RoutePlan routePlan,
   }) async {
     return const FormatterProcessorResult(
       proposal: ModelProposal(),

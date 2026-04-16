@@ -170,6 +170,17 @@ class AcceptanceGate {
         continue;
       }
 
+      if (!line.isEditable) {
+        issues.add(
+          AcceptanceIssue(
+            code: 'line_not_editable_${lineEdit.lineIndex}',
+            message:
+                'Line ${lineEdit.lineIndex} is protected by the parser and cannot be model-edited.',
+          ),
+        );
+        continue;
+      }
+
       final replacementNode = parser.parse(replacement).lines.firstOrNull;
       if (replacementNode == null || replacementNode.kind != line.kind) {
         issues.add(

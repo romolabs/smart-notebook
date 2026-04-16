@@ -73,6 +73,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         'Start writing in the raw pane to see structure, cleanup, and verification hints.',
     changes: [],
     flags: [],
+    routePlan: RoutePlan(
+      execution: RouteExecution.deterministicOnly,
+      riskLevel: NoteRiskLevel.low,
+      summary: 'Waiting for note content.',
+    ),
   );
   Timer? _enhancementDebounce;
   Timer? _persistDebounce;
@@ -722,6 +727,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         children: [
           _buildEnhancedArtifactsSection(context),
           const SizedBox(height: 12),
+          _buildRoutePlanCard(context),
+          const SizedBox(height: 12),
           _buildProcessorStatusRow(context),
           const SizedBox(height: 16),
           Expanded(
@@ -1039,6 +1046,54 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           ),
         );
       }).toList(),
+    );
+  }
+
+  Widget _buildRoutePlanCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final routePlan = _snapshot.routePlan;
+    final (backgroundColor, borderColor, label) = switch (routePlan.execution) {
+      RouteExecution.local => (
+        const Color(0xFFEAF3FF),
+        const Color(0xFFC9D9F6),
+        'Route: Local bounded',
+      ),
+      RouteExecution.deterministicOnly => (
+        const Color(0xFFF7F1E8),
+        const Color(0xFFE2D2B9),
+        'Route: Deterministic only',
+      ),
+      RouteExecution.deferredCloud => (
+        const Color(0xFFF3EDF9),
+        const Color(0xFFD8CDEE),
+        'Route: Deferred cloud',
+      ),
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            routePlan.summary,
+            style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
+          ),
+        ],
+      ),
     );
   }
 

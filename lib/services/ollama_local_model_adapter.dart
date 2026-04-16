@@ -27,6 +27,7 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
   Future<FormatterProcessorResult> runFormatter({
     required EnhancementRequest request,
     required ChampionDraft champion,
+    required RoutePlan routePlan,
   }) async {
     final probe = await _probeRuntime();
     if (!probe.modelAvailable) {
@@ -43,7 +44,11 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
 
     try {
       final payload = await _generateJson(
-        _buildFormatterPrompt(request: request, champion: champion),
+        _buildFormatterPrompt(
+          request: request,
+          champion: champion,
+          routePlan: routePlan,
+        ),
       );
       final proposal = _parseModelProposal(payload);
       final legacyWholeNoteResponse =
@@ -241,18 +246,26 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
   String _buildFormatterPrompt({
     required EnhancementRequest request,
     required ChampionDraft champion,
+    required RoutePlan routePlan,
   }) {
     final enabled = <String>[
       if (request.toggles.spelling) 'spelling',
       if (request.toggles.formatting) 'formatting',
       if (request.toggles.clarity) 'clarity',
     ].join(', ');
+    final allowedCapabilities = routePlan.allowedCapabilities
+        .map((capability) => capability.name)
+        .join(', ');
+    final editableLineIndexes = routePlan.editableLineIndexes.join(', ');
 
     return '''
 Return one JSON object only.
 
 Role: bounded formatter proposal generator for Smart Notebook.
 Goal: propose only the safest single-line edits for $enabled against the champion draft.
+Route summary: ${routePlan.summary}
+Allowed capabilities: ${allowedCapabilities.isEmpty ? 'none' : allowedCapabilities}
+Editable line indexes: ${editableLineIndexes.isEmpty ? 'none' : editableLineIndexes}
 
 Rules:
 - Do not return the final enhanced note.
@@ -271,6 +284,9 @@ Rules:
 - Keep at most 3 lineEdits.
 - Keep at most 3 artifacts.
 - Keep labels and descriptions short.
+- Never propose a line edit for any line index not listed as editable.
+- If allowed capabilities do not include lineEdits, return an empty lineEdits array.
+- If allowed capabilities do not include an artifact category, do not return that artifact kind.
 
 JSON schema:
 {"lineEdits":[{"lineIndex":0,"replacement":"string","type":"spelling|formatting|clarity","label":"string","description":"string"}],"artifacts":[{"kind":"title|summary|actionItems","value":"string","evidenceLineIndexes":[0],"label":"string","description":"string"}]}
