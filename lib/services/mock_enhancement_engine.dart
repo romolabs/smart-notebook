@@ -1,4 +1,7 @@
 import '../models/notebook_models.dart';
+import 'acceptance_gate.dart';
+import 'deterministic_formatter.dart';
+import 'note_parser.dart';
 
 abstract class EnhancementEngine {
   Future<EnhancementSnapshot> process(EnhancementRequest request);
@@ -44,136 +47,64 @@ abstract class LocalModelAdapter {
 class MockEnhancementEngine implements EnhancementEngine {
   const MockEnhancementEngine({
     this.localModelAdapter = const UnavailableLocalModelAdapter(),
+    this.parser = const NoteParser(),
+    this.formatter = const DeterministicFormatter(),
+    this.acceptanceGate = const AcceptanceGate(),
   });
 
   final LocalModelAdapter localModelAdapter;
+  final NoteParser parser;
+  final DeterministicFormatter formatter;
+  final AcceptanceGate acceptanceGate;
 
   @override
   Future<EnhancementSnapshot> process(EnhancementRequest request) async {
-    final trimmed = request.rawContent.trim();
-    if (trimmed.isEmpty) {
+    final normalizedRaw = request.rawContent
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    if (normalizedRaw.trim().isEmpty) {
       return _emptySnapshot();
     }
 
-    var working = trimmed;
-    final changes = <EnhancementChange>[];
+    final structure = parser.parse(
+      normalizedRaw,
+      revisionId: request.revisionId?.toString(),
+    );
+    final champion = formatter.buildChampionDraft(
+      structure,
+      toggles: request.toggles,
+    );
+
+    var enhancedText = champion.text;
+    final changes = <EnhancementChange>[...champion.changes];
     final flags = <VerificationFlag>[];
     final processorStatuses = <ProcessorStatus>[];
 
-    if (request.toggles.spelling ||
-        request.toggles.formatting ||
-        request.toggles.clarity) {
-      final baselineChanges = <EnhancementChange>[];
-      final baseline = _applyFormatterFallback(
-        working,
-        baselineChanges,
-        request.toggles,
-      );
-      final formatterResult = request.modelMode == ModelMode.localFast
-          ? await localModelAdapter.runFormatter(request: request)
-          : _cloudNotReadyFormatter();
-
-      if (formatterResult.status.state == ProcessorState.completed &&
-          _shouldUseModelFormatter(
-            rawContent: request.rawContent,
-            baseline: baseline,
-            candidate: formatterResult.enhancedText,
-          )) {
-        working = formatterResult.enhancedText;
-        changes.addAll(
-          formatterResult.changes.isEmpty
-              ? baselineChanges
-              : formatterResult.changes,
-        );
-        processorStatuses.add(
-          ProcessorStatus(
-            kind: ProcessorKind.formatter,
-            state: ProcessorState.completed,
-            label: 'Formatter',
-            detail:
-                '${formatterResult.status.detail} Accepted after structural quality check.',
-          ),
-        );
-      } else {
-        working = baseline;
-        changes.addAll(baselineChanges);
-        processorStatuses.add(
-          ProcessorStatus(
-            kind: ProcessorKind.formatter,
-            state: request.modelMode == ModelMode.localFast
-                ? ProcessorState.completed
-                : formatterResult.status.state,
-            label: 'Formatter',
-            detail: request.modelMode == ModelMode.localFast
-                ? 'Used deterministic structure-preserving formatter because model output was weaker.'
-                : formatterResult.status.detail,
-          ),
-        );
-      }
-    } else {
-      processorStatuses.add(
-        const ProcessorStatus(
-          kind: ProcessorKind.formatter,
-          state: ProcessorState.skipped,
-          label: 'Formatter',
-          detail: 'Formatter processors are turned off.',
-        ),
-      );
-    }
-
-    if (request.toggles.verification) {
-      if (request.modelMode == ModelMode.localFast) {
-        final verificationFlags = _detectVerificationFlags(request.rawContent);
-        if (verificationFlags.isNotEmpty) {
-          flags.addAll(verificationFlags);
-          changes.add(
-            const EnhancementChange(
-              type: ChangeType.verification,
-              label: 'Verification hints',
-              description:
-                  'Flagged specific claims that may deserve a source check before sharing.',
-            ),
+    processorStatuses.add(
+      await _buildFormatterStatus(
+        request: request,
+        champion: champion,
+        onAcceptedText: (acceptedText, modelChanges) {
+          final acceptedStructure = parser.parse(acceptedText);
+          final acceptedDraft = formatter.buildChampionDraft(
+            acceptedStructure,
+            toggles: request.toggles,
           );
-        }
-        processorStatuses.add(
-          const ProcessorStatus(
-            kind: ProcessorKind.verifier,
-            state: ProcessorState.completed,
-            label: 'Verifier',
-            detail:
-                'Used conservative local verification rules to avoid speculative model warnings.',
-          ),
-        );
-      } else {
-        final verifierResult = _cloudNotReadyVerifier();
-        final verificationFlags = _detectVerificationFlags(request.rawContent);
-        if (verificationFlags.isNotEmpty) {
-          flags.addAll(verificationFlags);
-          changes.add(
-            const EnhancementChange(
-              type: ChangeType.verification,
-              label: 'Verification hints',
-              description:
-                  'Flagged specific claims that may deserve a source check before sharing.',
-            ),
-          );
-        }
-        processorStatuses.add(_fallbackStatus(verifierResult.status));
-      }
-    } else {
-      processorStatuses.add(
-        const ProcessorStatus(
-          kind: ProcessorKind.verifier,
-          state: ProcessorState.skipped,
-          label: 'Verifier',
-          detail: 'Verification is turned off.',
-        ),
-      );
-    }
+          enhancedText = acceptedDraft.text;
+          _mergeChanges(changes, acceptedDraft.changes);
+          _mergeChanges(changes, modelChanges);
+        },
+      ),
+    );
+
+    final verifierResult = _buildVerificationResult(request, normalizedRaw);
+    flags.addAll(verifierResult.flags);
+    _mergeChanges(changes, verifierResult.changes);
+    processorStatuses.add(verifierResult.status);
 
     return EnhancementSnapshot(
-      enhancedContent: working,
-      summary: _buildSummary(trimmed),
+      enhancedContent: enhancedText,
+      summary: _buildSummary(structure.note.analysisText),
       changes: changes,
       flags: flags,
       processorStatuses: processorStatuses,
@@ -181,74 +112,200 @@ class MockEnhancementEngine implements EnhancementEngine {
   }
 
   EnhancementSnapshot processSync(EnhancementRequest request) {
-    final trimmed = request.rawContent.trim();
-    if (trimmed.isEmpty) {
+    final normalizedRaw = request.rawContent
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    if (normalizedRaw.trim().isEmpty) {
       return _emptySnapshot();
     }
 
-    final changes = <EnhancementChange>[];
-    final working = _applyFormatterFallback(trimmed, changes, request.toggles);
-    final flags = request.toggles.verification
-        ? _detectVerificationFlags(request.rawContent)
-        : const <VerificationFlag>[];
-    final statuses = <ProcessorStatus>[
-      if (request.toggles.spelling ||
-          request.toggles.formatting ||
-          request.toggles.clarity)
-        const ProcessorStatus(
-          kind: ProcessorKind.formatter,
-          state: ProcessorState.unavailable,
-          label: 'Formatter',
-          detail: 'Seed snapshot used deterministic formatter fallback.',
-        )
-      else
-        const ProcessorStatus(
-          kind: ProcessorKind.formatter,
-          state: ProcessorState.skipped,
-          label: 'Formatter',
-          detail: 'Formatter processors are turned off.',
-        ),
-      if (request.toggles.verification)
-        const ProcessorStatus(
-          kind: ProcessorKind.verifier,
-          state: ProcessorState.unavailable,
-          label: 'Verifier',
-          detail: 'Seed snapshot used conservative verification fallback.',
-        )
-      else
-        const ProcessorStatus(
+    final structure = parser.parse(
+      normalizedRaw,
+      revisionId: request.revisionId?.toString(),
+    );
+    final champion = formatter.buildChampionDraft(
+      structure,
+      toggles: request.toggles,
+    );
+    final verification = _buildVerificationResult(request, normalizedRaw);
+
+    final changes = <EnhancementChange>[
+      ...champion.changes,
+      ...verification.changes,
+    ];
+
+    return EnhancementSnapshot(
+      enhancedContent: champion.text,
+      summary: _buildSummary(structure.note.analysisText),
+      changes: changes,
+      flags: verification.flags,
+      processorStatuses: [
+        if (request.toggles.spelling ||
+            request.toggles.formatting ||
+            request.toggles.clarity)
+          const ProcessorStatus(
+            kind: ProcessorKind.formatter,
+            state: ProcessorState.unavailable,
+            label: 'Formatter',
+            detail:
+                'Seed snapshot used the deterministic structure-first champion draft.',
+          )
+        else
+          const ProcessorStatus(
+            kind: ProcessorKind.formatter,
+            state: ProcessorState.skipped,
+            label: 'Formatter',
+            detail: 'Formatter processors are turned off.',
+          ),
+        verification.status,
+      ],
+    );
+  }
+
+  Future<ProcessorStatus> _buildFormatterStatus({
+    required EnhancementRequest request,
+    required ChampionDraft champion,
+    required void Function(
+      String acceptedText,
+      List<EnhancementChange> modelChanges,
+    )
+    onAcceptedText,
+  }) async {
+    final formatterEnabled =
+        request.toggles.spelling ||
+        request.toggles.formatting ||
+        request.toggles.clarity;
+    if (!formatterEnabled) {
+      return const ProcessorStatus(
+        kind: ProcessorKind.formatter,
+        state: ProcessorState.skipped,
+        label: 'Formatter',
+        detail: 'Formatter processors are turned off.',
+      );
+    }
+
+    if (request.modelMode != ModelMode.localFast) {
+      return const ProcessorStatus(
+        kind: ProcessorKind.formatter,
+        state: ProcessorState.unavailable,
+        label: 'Formatter',
+        detail:
+            'Cloud proposal routing is not wired yet, so the engine kept the deterministic champion draft.',
+      );
+    }
+
+    final modelResult = await localModelAdapter.runFormatter(request: request);
+    if (modelResult.status.state != ProcessorState.completed) {
+      return ProcessorStatus(
+        kind: ProcessorKind.formatter,
+        state: modelResult.status.state,
+        label: 'Formatter',
+        detail:
+            '${modelResult.status.detail} The engine kept the deterministic champion draft.',
+      );
+    }
+
+    final acceptance = acceptanceGate.evaluateFormatterCandidate(
+      champion: champion,
+      candidateText: modelResult.enhancedText,
+    );
+    if (!acceptance.accepted) {
+      final reason = acceptance.issues.isEmpty
+          ? 'the trust gate rejected the model draft.'
+          : acceptance.issues.first.message;
+      return ProcessorStatus(
+        kind: ProcessorKind.formatter,
+        state: ProcessorState.completed,
+        label: 'Formatter',
+        detail:
+            'Built the deterministic champion draft locally. Model draft was rejected because $reason',
+      );
+    }
+
+    onAcceptedText(acceptance.acceptedText!, modelResult.changes);
+    return const ProcessorStatus(
+      kind: ProcessorKind.formatter,
+      state: ProcessorState.completed,
+      label: 'Formatter',
+      detail:
+          'Built the deterministic champion draft and merged a trust-gated local proposal through the engine renderer.',
+    );
+  }
+
+  VerifierProcessorResult _buildVerificationResult(
+    EnhancementRequest request,
+    String rawContent,
+  ) {
+    if (!request.toggles.verification) {
+      return const VerifierProcessorResult(
+        flags: [],
+        changes: [],
+        status: ProcessorStatus(
           kind: ProcessorKind.verifier,
           state: ProcessorState.skipped,
           label: 'Verifier',
           detail: 'Verification is turned off.',
         ),
-    ];
-
-    if (flags.isNotEmpty) {
-      changes.add(
-        const EnhancementChange(
-          type: ChangeType.verification,
-          label: 'Verification hints',
-          description:
-              'Flagged specific claims that may deserve a source check before sharing.',
-        ),
       );
     }
 
-    return EnhancementSnapshot(
-      enhancedContent: working,
-      summary: _buildSummary(trimmed),
-      changes: changes,
+    final flags = _detectVerificationFlags(rawContent);
+    final changes = flags.isEmpty
+        ? const <EnhancementChange>[]
+        : const [
+            EnhancementChange(
+              type: ChangeType.verification,
+              label: 'Review hints',
+              description:
+                  'Flagged specific claims that may deserve a source check before sharing.',
+            ),
+          ];
+
+    final status = request.modelMode == ModelMode.localFast
+        ? const ProcessorStatus(
+            kind: ProcessorKind.verifier,
+            state: ProcessorState.completed,
+            label: 'Verifier',
+            detail:
+                'Used calm deterministic review hints so local verification stays conservative.',
+          )
+        : const ProcessorStatus(
+            kind: ProcessorKind.verifier,
+            state: ProcessorState.unavailable,
+            label: 'Verifier',
+            detail:
+                'Cloud verification is not wired yet, so the engine used deterministic review hints.',
+          );
+
+    return VerifierProcessorResult(
       flags: flags,
-      processorStatuses: statuses,
+      changes: changes,
+      status: status,
     );
+  }
+
+  void _mergeChanges(
+    List<EnhancementChange> destination,
+    List<EnhancementChange> incoming,
+  ) {
+    for (final change in incoming) {
+      final exists = destination.any(
+        (existing) =>
+            existing.type == change.type &&
+            existing.label == change.label &&
+            existing.description == change.description,
+      );
+      if (!exists) {
+        destination.add(change);
+      }
+    }
   }
 
   EnhancementSnapshot _emptySnapshot() {
     return const EnhancementSnapshot(
       enhancedContent: 'Your enhanced note will appear here as you type.',
       summary:
-          'Start writing in the raw pane to see structure, cleanup, and verification hints.',
+          'Start writing in the raw pane to see structure, cleanup, and review hints.',
       changes: [],
       flags: [],
       processorStatuses: [
@@ -268,252 +325,46 @@ class MockEnhancementEngine implements EnhancementEngine {
     );
   }
 
-  FormatterProcessorResult _cloudNotReadyFormatter() {
-    return const FormatterProcessorResult(
-      enhancedText: '',
-      changes: [],
-      status: ProcessorStatus(
-        kind: ProcessorKind.formatter,
-        state: ProcessorState.unavailable,
-        label: 'Formatter',
-        detail: 'Cloud formatter is not wired yet, using local fallback.',
-      ),
-    );
-  }
-
-  VerifierProcessorResult _cloudNotReadyVerifier() {
-    return const VerifierProcessorResult(
-      flags: [],
-      changes: [],
-      status: ProcessorStatus(
-        kind: ProcessorKind.verifier,
-        state: ProcessorState.unavailable,
-        label: 'Verifier',
-        detail: 'Cloud verifier is not wired yet, using local fallback.',
-      ),
-    );
-  }
-
-  ProcessorStatus _fallbackStatus(ProcessorStatus status) {
-    return ProcessorStatus(
-      kind: status.kind,
-      state: status.state,
-      label: status.label,
-      detail: status.detail,
-    );
-  }
-
-  bool _shouldUseModelFormatter({
-    required String rawContent,
-    required String baseline,
-    required String candidate,
-  }) {
-    final normalizedCandidate = candidate.trim();
-    if (normalizedCandidate.isEmpty) {
-      return false;
-    }
-
-    final rawLines = _meaningfulLines(rawContent);
-    final baselineLines = _meaningfulLines(baseline);
-    final candidateLines = _meaningfulLines(normalizedCandidate);
-    final hasStructuredRaw = rawLines.length >= 3;
-
-    if (hasStructuredRaw && candidateLines.length < baselineLines.length) {
-      return false;
-    }
-
-    final numberedListCount = RegExp(
-      r'^\d+\.',
-      multiLine: true,
-    ).allMatches(rawContent).length;
-    final candidateNumberedCount = RegExp(
-      r'^\d+\.',
-      multiLine: true,
-    ).allMatches(normalizedCandidate).length;
-    if (numberedListCount >= 2 && candidateNumberedCount < numberedListCount) {
-      return false;
-    }
-
-    if (rawContent.contains('Title:') &&
-        !normalizedCandidate.contains('Title:')) {
-      return false;
-    }
-
-    return true;
-  }
-
-  List<String> _meaningfulLines(String input) {
-    return input
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  String _applyFormatterFallback(
-    String input,
-    List<EnhancementChange> changes,
-    ProcessorToggles toggles,
-  ) {
-    var working = input;
-    if (toggles.spelling) {
-      final corrected = _applySpelling(working);
-      if (corrected != working) {
-        working = corrected;
-        changes.add(
-          const EnhancementChange(
-            type: ChangeType.spelling,
-            label: 'Spelling cleanup',
-            description:
-                'Corrected common note-taking typos and normalized sentence starts.',
-          ),
-        );
-      }
-    }
-
-    if (toggles.formatting) {
-      final formatted = _applyFormatting(working);
-      if (formatted != working) {
-        working = formatted;
-        changes.add(
-          const EnhancementChange(
-            type: ChangeType.formatting,
-            label: 'Structured layout',
-            description:
-                'Converted rough lines into a readable outline with sections and bullets.',
-          ),
-        );
-      }
-    }
-
-    if (toggles.clarity) {
-      final clarified = _applyClarity(working);
-      if (clarified != working) {
-        working = clarified;
-        changes.add(
-          const EnhancementChange(
-            type: ChangeType.clarity,
-            label: 'Clarity pass',
-            description:
-                'Smoothed phrasing while keeping the note faithful to the original meaning.',
-          ),
-        );
-      }
-    }
-
-    return working;
-  }
-
-  String _applySpelling(String input) {
-    var output = input;
-    const replacements = {
-      ' teh ': ' the ',
-      ' recieve ': ' receive ',
-      ' seperate ': ' separate ',
-      ' definately ': ' definitely ',
-      ' dont ': " don't ",
-      ' cant ': " can't ",
-      'w/': 'with',
-      'im ': "I'm ",
-    };
-    replacements.forEach((source, target) {
-      output = output.replaceAll(source, target);
-    });
-
-    final lines = output.split('\n').map((line) => line.trimRight()).map((
-      line,
-    ) {
-      if (line.isEmpty) {
-        return line;
-      }
-      return line[0].toUpperCase() + line.substring(1);
-    }).toList();
-    return lines.join('\n');
-  }
-
-  String _applyFormatting(String input) {
-    final lines = input
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    if (lines.isEmpty) {
-      return input;
-    }
-
-    final buffer = StringBuffer();
-    buffer.writeln('# Enhanced Note');
-    buffer.writeln();
-
-    final first = lines.first;
-    if (!first.startsWith('- ') && !first.endsWith(':')) {
-      buffer.writeln('## Core Thought');
-      buffer.writeln(first);
-      buffer.writeln();
-    }
-
-    final remaining = lines.skip(1).toList();
-    if (remaining.isNotEmpty) {
-      buffer.writeln('## Details');
-      for (final line in remaining) {
-        if (line.endsWith(':')) {
-          buffer.writeln();
-          buffer.writeln('### ${line.substring(0, line.length - 1)}');
-        } else if (line.startsWith('- ') || line.startsWith('* ')) {
-          buffer.writeln('- ${line.substring(2).trim()}');
-        } else {
-          buffer.writeln('- $line');
-        }
-      }
-    }
-
-    return buffer.toString().trim();
-  }
-
-  String _applyClarity(String input) {
-    return input
-        .replaceAll('need to', 'should')
-        .replaceAll('a lot of', 'many')
-        .replaceAll('really important', 'important')
-        .replaceAll('kind of', 'somewhat');
-  }
-
   List<VerificationFlag> _detectVerificationFlags(String input) {
     final flags = <VerificationFlag>[];
     final lower = input.toLowerCase();
 
-    if (lower.contains('2027') || lower.contains('next year')) {
+    if (RegExp(r'\b20\d{2}\b').hasMatch(input) || lower.contains('next year')) {
       flags.add(
         const VerificationFlag(
           status: VerificationStatus.warning,
-          claimText: 'Timeline or future-date claim',
+          claimText: 'Timeline or date claim',
           note:
-              'Future-looking dates often drift. Confirm this before turning it into a decision log.',
-          confidence: 0.46,
+              'Dates can drift quickly. Confirm the current timing before using this as a decision record.',
+          confidence: 0.43,
         ),
       );
     }
 
-    final numbers = RegExp(r'\b\d{3,}\b').allMatches(input).length;
+    final numbers = RegExp(r'\b\d{3,}(?:\.\d+)?\b').allMatches(input).length;
     if (numbers > 0) {
       flags.add(
         const VerificationFlag(
           status: VerificationStatus.needsReview,
           claimText: 'Numeric claim detected',
           note:
-              'Large numbers and metrics should link back to a source or meeting artifact.',
-          confidence: 0.61,
+              'Large numbers and metrics usually need a source, slide, or meeting artifact behind them.',
+          confidence: 0.59,
         ),
       );
     }
 
-    if (lower.contains('according to') || lower.contains('research says')) {
+    if (RegExp(
+      r'\b(according to|research says|study shows)\b',
+      caseSensitive: false,
+    ).hasMatch(input)) {
       flags.add(
         const VerificationFlag(
           status: VerificationStatus.warning,
           claimText: 'External source claim',
-          note: 'This sounds sourced but the citation is missing in the note.',
-          confidence: 0.74,
+          note:
+              'This sounds sourced, but the note does not include the citation yet.',
+          confidence: 0.71,
         ),
       );
     }
@@ -527,7 +378,7 @@ class MockEnhancementEngine implements EnhancementEngine {
         .map((line) => line.trim())
         .where((line) => line.isNotEmpty)
         .take(2)
-        .toList();
+        .toList(growable: false);
 
     if (sentences.isEmpty) {
       return 'No summary yet.';

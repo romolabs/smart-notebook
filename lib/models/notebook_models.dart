@@ -10,6 +10,36 @@ enum ProcessorKind { formatter, verifier }
 
 enum ProcessorState { completed, skipped, unavailable, failed }
 
+enum LineKind {
+  blank,
+  paragraph,
+  bullet,
+  orderedItem,
+  checkbox,
+  heading,
+  keyValue,
+  quote,
+  code,
+  tableRow,
+  unknown,
+}
+
+enum BlockKind {
+  blank,
+  paragraph,
+  bulletList,
+  orderedList,
+  checklist,
+  heading,
+  keyValueGroup,
+  quote,
+  code,
+  table,
+  mixed,
+}
+
+enum AcceptanceDecision { accepted, rejected }
+
 class AppSettings {
   const AppSettings({required this.ollamaBaseUrl, required this.ollamaModel});
 
@@ -222,6 +252,140 @@ class EnhancementSnapshot {
   final List<ProcessorStatus> processorStatuses;
 }
 
+class NormalizedNote {
+  const NormalizedNote({
+    required this.rawText,
+    required this.analysisText,
+    required this.revisionId,
+  });
+
+  final String rawText;
+  final String analysisText;
+  final String revisionId;
+}
+
+class LineNode {
+  const LineNode({
+    required this.index,
+    required this.sourceLine,
+    required this.trimmed,
+    required this.kind,
+    required this.indent,
+    this.headingLevel,
+    this.orderedIndex,
+    this.checkboxChecked,
+    this.key,
+    this.value,
+  });
+
+  final int index;
+  final String sourceLine;
+  final String trimmed;
+  final LineKind kind;
+  final int indent;
+  final int? headingLevel;
+  final int? orderedIndex;
+  final bool? checkboxChecked;
+  final String? key;
+  final String? value;
+
+  bool get isBlank => kind == LineKind.blank;
+}
+
+class BlockNode {
+  const BlockNode({
+    required this.index,
+    required this.kind,
+    required this.lines,
+  });
+
+  final int index;
+  final BlockKind kind;
+  final List<LineNode> lines;
+
+  int get startLine => lines.first.index;
+  int get endLine => lines.last.index;
+}
+
+class StructureMetrics {
+  const StructureMetrics({
+    required this.lineCount,
+    required this.nonBlankLineCount,
+    required this.blockCount,
+    required this.headingCount,
+    required this.bulletCount,
+    required this.orderedItemCount,
+    required this.checkboxCount,
+    required this.checkedCheckboxCount,
+    required this.quoteLineCount,
+    required this.codeLineCount,
+    required this.keyValueCount,
+    required this.tableRowCount,
+  });
+
+  final int lineCount;
+  final int nonBlankLineCount;
+  final int blockCount;
+  final int headingCount;
+  final int bulletCount;
+  final int orderedItemCount;
+  final int checkboxCount;
+  final int checkedCheckboxCount;
+  final int quoteLineCount;
+  final int codeLineCount;
+  final int keyValueCount;
+  final int tableRowCount;
+}
+
+class NoteStructure {
+  const NoteStructure({
+    required this.note,
+    required this.lines,
+    required this.blocks,
+    required this.metrics,
+    required this.protectedTokens,
+  });
+
+  final NormalizedNote note;
+  final List<LineNode> lines;
+  final List<BlockNode> blocks;
+  final StructureMetrics metrics;
+  final Set<String> protectedTokens;
+}
+
+class ChampionDraft {
+  const ChampionDraft({
+    required this.text,
+    required this.structure,
+    required this.changes,
+  });
+
+  final String text;
+  final NoteStructure structure;
+  final List<EnhancementChange> changes;
+}
+
+class AcceptanceIssue {
+  const AcceptanceIssue({required this.code, required this.message});
+
+  final String code;
+  final String message;
+}
+
+class AcceptanceReport {
+  const AcceptanceReport({
+    required this.decision,
+    required this.issues,
+    this.acceptedText,
+  });
+
+  final AcceptanceDecision decision;
+  final List<AcceptanceIssue> issues;
+  final String? acceptedText;
+
+  bool get accepted => decision == AcceptanceDecision.accepted;
+}
+
 class ProcessorStatus {
   const ProcessorStatus({
     required this.kind,
@@ -241,11 +405,13 @@ class EnhancementRequest {
     required this.rawContent,
     required this.modelMode,
     required this.toggles,
+    this.revisionId,
   });
 
   final String rawContent;
   final ModelMode modelMode;
   final ProcessorToggles toggles;
+  final int? revisionId;
 }
 
 String encodeNotes(List<NotebookNote> notes) {

@@ -94,6 +94,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   bool _isProcessing = false;
   String? _loadError;
   String _searchQuery = '';
+  int _enhancementRevision = 0;
 
   @override
   void initState() {
@@ -1503,6 +1504,9 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       return;
     }
 
+    final selectedNoteId = _selectedNote?.id;
+    final requestRevision = ++_enhancementRevision;
+
     setState(() {
       _isProcessing = true;
     });
@@ -1512,10 +1516,19 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         rawContent: rawContent,
         modelMode: _mode,
         toggles: _toggles,
+        revisionId: requestRevision,
       ),
     );
 
     if (!mounted) {
+      return;
+    }
+
+    final isStale =
+        requestRevision != _enhancementRevision ||
+        selectedNoteId != _selectedNote?.id ||
+        rawContent != _controller.text;
+    if (isStale) {
       return;
     }
 
