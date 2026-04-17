@@ -130,13 +130,7 @@ class RoutePlanner {
     if (request.modelMode == ModelMode.cloudAccurate) {
       return RouteExecution.deferredCloud;
     }
-    if (riskLevel == NoteRiskLevel.high) {
-      return RouteExecution.deterministicOnly;
-    }
-    if (allowedCapabilities.isEmpty) {
-      return RouteExecution.deterministicOnly;
-    }
-    return RouteExecution.local;
+    return RouteExecution.deterministicOnly;
   }
 
   String _summaryFor({
@@ -154,7 +148,7 @@ class RoutePlanner {
       RouteExecution.local =>
         'Local bounded route active with ${riskLevel.name} risk ($mathSummary).',
       RouteExecution.deterministicOnly =>
-        'Deterministic-only route active because this note is ${riskLevel.name}-risk or too symbol-heavy ($mathSummary).',
+        'Deterministic-only route active. Use explicit // AI commands for on-demand assistance ($mathSummary).',
       RouteExecution.deferredCloud =>
         'Cloud route deferred while current build stays deterministic ($mathSummary).',
     };

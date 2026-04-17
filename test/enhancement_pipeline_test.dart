@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_notebook/models/notebook_models.dart';
 import 'package:smart_notebook/services/acceptance_gate.dart';
+import 'package:smart_notebook/services/ai_command_service.dart';
 import 'package:smart_notebook/services/authoring_directive_service.dart';
 import 'package:smart_notebook/services/deterministic_formatter.dart';
 import 'package:smart_notebook/services/mock_enhancement_engine.dart';
@@ -489,7 +490,7 @@ $$
   );
 
   test(
-    'engine falls back to deterministic champion when local formatter fails',
+    'engine keeps the deterministic champion when background formatting is explicit-only',
     () async {
       const rawContent = 'Project sync\n- budget 1200\n- call Alex';
       final champion = formatter.buildChampionDraft(
@@ -512,15 +513,11 @@ $$
       expect(snapshot.summary, 'Project sync budget 1200');
       expect(
         snapshot.processorStatuses.map((status) => status.state).toList(),
-        [ProcessorState.failed, ProcessorState.completed],
+        [ProcessorState.unavailable, ProcessorState.completed],
       );
       expect(
         snapshot.processorStatuses.first.detail,
-        contains('Local formatter timed out.'),
-      );
-      expect(
-        snapshot.processorStatuses.first.detail,
-        contains('The engine kept the deterministic champion draft.'),
+        contains('Deterministic-only route active'),
       );
       expect(
         snapshot.flags.map((flag) => flag.claimText),
@@ -550,6 +547,16 @@ class _ThrowingLocalModelAdapter extends LocalModelAdapter {
     required String enhancedText,
   }) {
     throw StateError('Cloud routing should bypass the local verifier adapter.');
+  }
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) {
+    throw StateError(
+      'Explicit AI commands are not part of this pipeline test.',
+    );
   }
 }
 
@@ -587,6 +594,22 @@ class _FailedLocalModelAdapter extends LocalModelAdapter {
         label: 'Verifier',
         detail: 'Unused in this fallback regression test.',
       ),
+    );
+  }
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) async {
+    return AiCommandResult(
+      request: command,
+      status: AiCommandStatus.unavailable,
+      title: command.resultTitle,
+      content: '',
+      detail:
+          'Explicit AI commands are not part of this fallback regression test.',
+      providerLabel: 'Test adapter',
     );
   }
 }

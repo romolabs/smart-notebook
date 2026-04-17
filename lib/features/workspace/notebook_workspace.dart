@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../../models/notebook_models.dart';
+import '../../services/ai_command_service.dart';
 import '../../services/authoring_directive_service.dart';
 import '../../services/mock_enhancement_engine.dart';
 import '../../services/note_parser.dart';
@@ -69,6 +70,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   final _notesRailScrollController = ScrollController();
   final _editorFocusNode = FocusNode();
   static const _authoringDirectiveService = AuthoringDirectiveService();
+  static const _aiCommandService = AiCommandService();
   static const _contentParser = NoteParser();
 
   List<NotebookNote> _notes = const [];
@@ -106,6 +108,9 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   String? _loadError;
   String _searchQuery = '';
   int _enhancementRevision = 0;
+  int _aiCommandRevision = 0;
+  Map<String, AiCommandResult> _aiCommandResults = const {};
+  String? _activeAiCommandId;
 
   @override
   void initState() {
@@ -159,6 +164,9 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 1100;
+              final compactNotesRailHeight = _compactNotesRailHeight(
+                constraints.maxHeight,
+              );
               final content = compact
                   ? Column(
                       children: [
@@ -225,7 +233,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                       ? Column(
                           children: [
                             SizedBox(
-                              height: 360,
+                              height: compactNotesRailHeight,
                               child: _buildNotesRail(
                                 context,
                                 compact: true,
@@ -297,6 +305,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       icon: const Icon(Icons.tune),
       label: const Text('Settings'),
     );
+    final aiDrawerButton = FilledButton.tonalIcon(
+      onPressed: _openAiDrawer,
+      icon: const Icon(Icons.auto_awesome_outlined),
+      label: Text(_visibleAiCommandResults.isEmpty ? 'AI Guide' : 'AI Drawer'),
+    );
 
     if (compact) {
       return Column(
@@ -309,6 +322,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             child: Row(
               children: [
                 modeSwitcher,
+                const SizedBox(width: 12),
+                aiDrawerButton,
                 const SizedBox(width: 12),
                 settingsButton,
               ],
@@ -323,6 +338,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         Expanded(child: titleBlock),
         const SizedBox(width: 16),
         modeSwitcher,
+        const SizedBox(width: 12),
+        aiDrawerButton,
         const SizedBox(width: 12),
         settingsButton,
       ],
@@ -498,12 +515,37 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     required NotebookNote selected,
   }) {
     if (compact) {
-      return Column(
-        children: [
-          Expanded(child: _buildRawPane(context)),
-          const SizedBox(height: 16),
-          Expanded(child: _buildEnhancedPane(context, selected: selected)),
-        ],
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final shouldScrollPanels = constraints.maxHeight < 720;
+          if (!shouldScrollPanels) {
+            return Column(
+              children: [
+                Expanded(child: _buildRawPane(context)),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: _buildEnhancedPane(context, selected: selected),
+                ),
+              ],
+            );
+          }
+
+          final panelHeight = constraints.maxHeight < 520
+              ? 520.0
+              : constraints.maxHeight.clamp(520.0, 640.0);
+          return SingleChildScrollView(
+            child: Column(
+              children: [
+                SizedBox(height: panelHeight, child: _buildRawPane(context)),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: panelHeight,
+                  child: _buildEnhancedPane(context, selected: selected),
+                ),
+              ],
+            ),
+          );
+        },
       );
     }
 
@@ -1043,10 +1085,12 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     final summary = _snapshot.summary.trim();
     final suggestedTitle = _snapshotSuggestedTitle;
     final actionItems = _snapshotActionItems;
+    final commandResults = _visibleAiCommandResults;
     final hasSummary = summary.isNotEmpty;
     final hasSidecars = suggestedTitle != null || actionItems.isNotEmpty;
+    final hasCommandResults = commandResults.isNotEmpty;
 
-    if (!hasSummary && !hasSidecars) {
+    if (!hasSummary && !hasSidecars && !hasCommandResults) {
       return const SizedBox.shrink();
     }
 
@@ -1141,6 +1185,10 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             },
           ),
         ],
+        if (hasCommandResults) ...[
+          if (hasSummary || hasSidecars) const SizedBox(height: 12),
+          _buildAiCommandResultsCard(context, commandResults),
+        ],
       ],
     );
   }
@@ -1187,6 +1235,119 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           const SizedBox(height: 8),
           child,
         ],
+      ),
+    );
+  }
+
+  Widget _buildAiCommandResultsCard(
+    BuildContext context,
+    List<AiCommandResult> results,
+  ) {
+    final theme = Theme.of(context);
+    return _buildArtifactCard(
+      context,
+      title: 'AI Requests',
+      backgroundColor: const Color(0xFFEAF1F8),
+      borderColor: const Color(0xFFC9D8EA),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var index = 0; index < results.length; index++) ...[
+            _buildAiCommandResultPreview(context, results[index], theme),
+            if (index != results.length - 1)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: Divider(height: 1),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAiCommandResultPreview(
+    BuildContext context,
+    AiCommandResult result,
+    ThemeData theme,
+  ) {
+    final preview = result.content.trim().isEmpty
+        ? result.detail
+        : _compactPreview(result.content);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              result.request.displayLabel,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            _buildAiCommandStatusChip(result),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          preview,
+          style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Text(
+              result.providerLabel,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF51606A),
+              ),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => _openAiDrawer(result.request.id),
+              child: const Text('Open AI Drawer'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAiCommandStatusChip(AiCommandResult result) {
+    final (background, foreground, label) = switch (result.status) {
+      AiCommandStatus.running => (
+        const Color(0xFFE7F3E9),
+        const Color(0xFF1F6A3C),
+        'Running',
+      ),
+      AiCommandStatus.completed => (
+        const Color(0xFFE5F1EC),
+        const Color(0xFF245F50),
+        'Ready',
+      ),
+      AiCommandStatus.unavailable => (
+        const Color(0xFFFFF0DF),
+        const Color(0xFF8A5A10),
+        'Unavailable',
+      ),
+      AiCommandStatus.failed => (
+        const Color(0xFFFBE6E8),
+        const Color(0xFFA23445),
+        'Error',
+      ),
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: foreground, fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -1683,10 +1844,12 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       _notes = notes;
       _selectedNote = selected;
       _controller.text = selected?.rawContent ?? '';
+      _aiCommandResults = const {};
+      _activeAiCommandId = null;
       _isLoading = false;
     });
     if (selected != null) {
-      unawaited(_runEnhancement(selected.rawContent));
+      unawaited(_refreshNoteProcessing(selected.rawContent));
     }
   }
 
@@ -1739,12 +1902,140 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     _queueEnhancement(expansion.text);
   }
 
+  Future<void> _refreshNoteProcessing(String rawContent) async {
+    await _runEnhancement(rawContent);
+    await _syncAiCommands(rawContent);
+  }
+
+  Future<void> _syncAiCommands(String rawContent) async {
+    if (!mounted) {
+      return;
+    }
+
+    final selectedNoteId = _selectedNote?.id;
+    if (selectedNoteId == null) {
+      return;
+    }
+
+    final commands = _aiCommandService.parseCommands(rawContent);
+    final activeIds = commands.map((command) => command.id).toSet();
+    final requestRevision = ++_aiCommandRevision;
+    final strippedContent = _aiCommandService.stripCommandLines(rawContent);
+
+    final nextResults = <String, AiCommandResult>{};
+    for (final command in commands) {
+      final existing = _aiCommandResults[command.id];
+      nextResults[command.id] =
+          existing ??
+          AiCommandResult(
+            request: command,
+            status: AiCommandStatus.running,
+            title: command.resultTitle,
+            content: '',
+            detail: 'Waiting for an explicit AI response.',
+            providerLabel: _providerLabelForMode(_mode),
+          );
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _aiCommandResults = nextResults;
+      if (_activeAiCommandId != null &&
+          !activeIds.contains(_activeAiCommandId)) {
+        _activeAiCommandId = null;
+      }
+      _activeAiCommandId ??= commands.firstOrNull?.id;
+    });
+
+    final pending = commands
+        .where((command) {
+          final existing = _aiCommandResults[command.id];
+          return existing == null || !existing.isTerminal;
+        })
+        .toList(growable: false);
+
+    for (final command in pending) {
+      final result = await _executeAiCommand(
+        command: command,
+        rawContent: strippedContent,
+        requestRevision: requestRevision,
+      );
+
+      if (!_isCurrentAiCommandRun(
+        rawContent: rawContent,
+        requestRevision: requestRevision,
+        selectedNoteId: selectedNoteId,
+      )) {
+        return;
+      }
+
+      setState(() {
+        _aiCommandResults = {..._aiCommandResults, command.id: result};
+        _activeAiCommandId ??= command.id;
+      });
+    }
+  }
+
+  Future<AiCommandResult> _executeAiCommand({
+    required AiCommandRequest command,
+    required String rawContent,
+    required int requestRevision,
+  }) async {
+    final context = command.context.trim();
+    if (context.isEmpty) {
+      return AiCommandResult(
+        request: command,
+        status: AiCommandStatus.unavailable,
+        title: command.resultTitle,
+        content: '',
+        detail: 'No nearby context matched this command yet.',
+        providerLabel: _providerLabelForMode(_mode),
+      );
+    }
+
+    if (_mode == ModelMode.cloudAccurate) {
+      return AiCommandResult(
+        request: command,
+        status: AiCommandStatus.unavailable,
+        title: command.resultTitle,
+        content: '',
+        detail:
+            'Cloud AI commands are not wired yet in this build. Switch to Local Fast to test explicit AI requests.',
+        providerLabel: 'Cloud AI coming soon',
+      );
+    }
+
+    return widget.engine.localModelAdapter.runAiCommand(
+      request: EnhancementRequest(
+        rawContent: rawContent,
+        modelMode: _mode,
+        toggles: _toggles,
+        revisionId: requestRevision,
+      ),
+      command: command,
+    );
+  }
+
+  bool _isCurrentAiCommandRun({
+    required String rawContent,
+    required int requestRevision,
+    required String selectedNoteId,
+  }) {
+    return mounted &&
+        requestRevision == _aiCommandRevision &&
+        selectedNoteId == _selectedNote?.id &&
+        rawContent == _controller.text;
+  }
+
   Future<void> _refreshEnhancement() async {
     final selected = _selectedNote;
     if (selected == null) {
       return;
     }
-    await _runEnhancement(_controller.text);
+    await _refreshNoteProcessing(_controller.text);
     _persistCurrentVersion();
   }
 
@@ -1752,15 +2043,17 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     setState(() {
       _selectedNote = note;
       _controller.text = note.rawContent;
+      _aiCommandResults = const {};
+      _activeAiCommandId = null;
     });
-    unawaited(_runEnhancement(note.rawContent));
+    unawaited(_refreshNoteProcessing(note.rawContent));
   }
 
   void _updateToggles(ProcessorToggles toggles) {
     setState(() {
       _toggles = toggles;
     });
-    unawaited(_runEnhancement(_controller.text));
+    unawaited(_refreshNoteProcessing(_controller.text));
     _persistCurrentVersion();
   }
 
@@ -1781,8 +2074,10 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       _notes = [newNote, ..._notes];
       _selectedNote = newNote;
       _controller.clear();
+      _aiCommandResults = const {};
+      _activeAiCommandId = null;
     });
-    unawaited(_runEnhancement(''));
+    unawaited(_refreshNoteProcessing(''));
 
     await widget.repository.saveNotes(_notes);
   }
@@ -1888,6 +2183,10 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   String _versionLabel(NotebookVersion version) {
     final mode = version.modelMode == ModelMode.localFast ? 'Local' : 'Cloud';
     return '$mode ${_relativeDate(version.createdAt)}';
+  }
+
+  double _compactNotesRailHeight(double availableHeight) {
+    return (availableHeight * 0.24).clamp(180.0, 300.0);
   }
 
   String? get _snapshotSuggestedTitle {
@@ -2048,6 +2347,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
 
     final selectedNoteId = _selectedNote?.id;
     final requestRevision = ++_enhancementRevision;
+    final strippedContent = _aiCommandService.stripCommandLines(rawContent);
 
     setState(() {
       _isProcessing = true;
@@ -2055,7 +2355,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
 
     final snapshot = await widget.engine.process(
       EnhancementRequest(
-        rawContent: rawContent,
+        rawContent: strippedContent,
         modelMode: _mode,
         toggles: _toggles,
         revisionId: requestRevision,
@@ -2078,6 +2378,158 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       _snapshot = snapshot;
       _isProcessing = false;
     });
+  }
+
+  List<AiCommandResult> get _visibleAiCommandResults {
+    final results = _aiCommandResults.values.toList(growable: false);
+    results.sort(
+      (left, right) =>
+          left.request.lineIndex.compareTo(right.request.lineIndex),
+    );
+    return results;
+  }
+
+  String _providerLabelForMode(ModelMode mode) {
+    return switch (mode) {
+      ModelMode.localFast => 'Local AI request',
+      ModelMode.cloudAccurate => 'Cloud AI request',
+    };
+  }
+
+  String _compactPreview(String value) {
+    final normalized = value
+        .replaceAll('\n', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (normalized.length <= 160) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 157)}...';
+  }
+
+  Future<void> _openAiDrawer([String? commandId]) async {
+    if (!mounted) {
+      return;
+    }
+
+    final available = _visibleAiCommandResults;
+    final focusId = commandId ?? _activeAiCommandId;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) {
+        final results = _reorderAiResults(available, focusId);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: FractionallySizedBox(
+              heightFactor: 0.82,
+              child: _buildAiDrawerContent(context, results),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _activeAiCommandId = focusId;
+    });
+  }
+
+  List<AiCommandResult> _reorderAiResults(
+    List<AiCommandResult> results,
+    String? focusId,
+  ) {
+    if (focusId == null) {
+      return results;
+    }
+    final focused = results.where((result) => result.request.id == focusId);
+    final remainder = results.where((result) => result.request.id != focusId);
+    return [...focused, ...remainder];
+  }
+
+  Widget _buildAiDrawerContent(
+    BuildContext context,
+    List<AiCommandResult> results,
+  ) {
+    final theme = Theme.of(context);
+    if (results.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'AI Drawer',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Type commands like //explain, //explain formula, //define entropy, or //fact check to run AI only when you want it.',
+            style: theme.textTheme.bodyLarge?.copyWith(height: 1.45),
+          ),
+        ],
+      );
+    }
+
+    return ListView.separated(
+      itemCount: results.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 14),
+      itemBuilder: (context, index) {
+        final result = results[index];
+        return Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFD8DBD7)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    result.title,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  _buildAiCommandStatusChip(result),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                result.request.displayLabel,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFF5A666F),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                result.providerLabel,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF64717A),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SelectableText(
+                result.content.trim().isEmpty ? result.detail : result.content,
+                style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   String _statusLabel(ProcessorState state) {
@@ -2171,6 +2623,6 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     if (!mounted) {
       return;
     }
-    await _runEnhancement(_controller.text);
+    await _refreshNoteProcessing(_controller.text);
   }
 }

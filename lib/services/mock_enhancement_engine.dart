@@ -1,5 +1,6 @@
 import '../models/notebook_models.dart';
 import 'acceptance_gate.dart';
+import 'ai_command_service.dart';
 import 'artifact_builder.dart';
 import 'deterministic_formatter.dart';
 import 'note_parser.dart';
@@ -44,6 +45,11 @@ abstract class LocalModelAdapter {
   Future<VerifierProcessorResult> runVerifier({
     required EnhancementRequest request,
     required String enhancedText,
+  });
+
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
   });
 }
 
@@ -542,6 +548,21 @@ class UnavailableLocalModelAdapter extends LocalModelAdapter {
         label: 'Verifier',
         detail: 'No local model runtime detected.',
       ),
+    );
+  }
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) async {
+    return AiCommandResult(
+      request: command,
+      status: AiCommandStatus.unavailable,
+      title: command.resultTitle,
+      content: '',
+      detail: 'No local model runtime detected.',
+      providerLabel: 'Local AI unavailable',
     );
   }
 }

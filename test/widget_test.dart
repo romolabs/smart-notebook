@@ -7,6 +7,7 @@ import 'package:smart_notebook/app.dart';
 import 'package:smart_notebook/data/seed_notes.dart';
 import 'package:smart_notebook/features/workspace/notebook_workspace.dart';
 import 'package:smart_notebook/models/notebook_models.dart';
+import 'package:smart_notebook/services/ai_command_service.dart';
 import 'package:smart_notebook/services/mock_enhancement_engine.dart';
 import 'package:smart_notebook/services/notebook_repository.dart';
 
@@ -38,6 +39,22 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Lecture scraps'), findsNWidgets(2));
+  });
+
+  testWidgets('compact workspace avoids bottom overflow in a short window', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1024, 720);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpApp(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Raw'), findsOneWidget);
+    expect(find.text('Enhanced'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('raw editor expands inline symbol shortcuts deterministically', (
@@ -245,7 +262,7 @@ Var(X) &= E[X^2] - (E[X])^2
   });
 
   testWidgets(
-    'renders trust-first merged output and keeps model artifacts out of visible panes',
+    'renders explicit // AI requests as sidecar results and opens the AI drawer',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1200);
       tester.view.devicePixelRatio = 1.0;
@@ -265,7 +282,7 @@ Var(X) &= E[X^2] - (E[X])^2
       });
 
       const engine = MockEnhancementEngine(
-        localModelAdapter: _TrustFirstLocalModelAdapter(),
+        localModelAdapter: _AiCommandLocalModelAdapter(),
       );
       final repository = NotebookRepository.forTesting(
         databasePath: file.path,
@@ -282,8 +299,10 @@ Var(X) &= E[X^2] - (E[X])^2
         updatedAt: now,
         rawContent: [
           'Project sync',
-          '- call alice at 3',
-          '- budget 1200',
+          '/math',
+          r'F = ma',
+          '/end',
+          '//explain formula',
         ].join('\n'),
         versions: const [],
       );
@@ -301,16 +320,20 @@ Var(X) &= E[X^2] - (E[X])^2
       );
       await tester.pump();
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
 
-      expect(find.text('Formatter: Active'), findsOneWidget);
-      expect(find.text('Verifier: Active'), findsOneWidget);
-      expect(find.text('Capitalize attendee'), findsOneWidget);
-      expect(find.text('Review hints'), findsOneWidget);
-      expect(find.text('Numeric claim detected'), findsOneWidget);
-      expect(find.text('Summary'), findsOneWidget);
-      expect(find.textContaining('call Alice at 3 pm'), findsOneWidget);
-      expect(find.text('Model-only summary should stay sidecar'), findsNothing);
-      expect(find.text('Model-only action list'), findsNothing);
+      expect(find.text('AI Requests'), findsOneWidget);
+      expect(find.text('//explain formula'), findsOneWidget);
+      expect(find.textContaining('The formula states'), findsOneWidget);
+
+      await tester.tap(find.text('Open AI Drawer'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Formula Explanation'), findsOneWidget);
+      expect(
+        find.textContaining('force equals mass times acceleration'),
+        findsWidgets,
+      );
     },
   );
 
@@ -472,8 +495,8 @@ class _DelayedEngine extends MockEnhancementEngine {
   }
 }
 
-class _TrustFirstLocalModelAdapter extends LocalModelAdapter {
-  const _TrustFirstLocalModelAdapter();
+class _AiCommandLocalModelAdapter extends LocalModelAdapter {
+  const _AiCommandLocalModelAdapter();
 
   @override
   Future<FormatterProcessorResult> runFormatter({
@@ -533,6 +556,22 @@ class _TrustFirstLocalModelAdapter extends LocalModelAdapter {
         label: 'Verifier',
         detail: 'Unused in this widget test adapter.',
       ),
+    );
+  }
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) async {
+    return AiCommandResult(
+      request: command,
+      status: AiCommandStatus.completed,
+      title: 'Formula Explanation',
+      content:
+          'The formula states that force equals mass times acceleration, so stronger acceleration or more mass implies more force.',
+      detail: 'Test AI response completed.',
+      providerLabel: 'Test local AI',
     );
   }
 }

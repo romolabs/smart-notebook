@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/notebook_models.dart';
+import 'ai_command_service.dart';
 import 'mock_enhancement_engine.dart';
 
 class OllamaLocalModelAdapter extends LocalModelAdapter {
@@ -124,6 +125,62 @@ class OllamaLocalModelAdapter extends LocalModelAdapter {
           label: 'Verifier',
           detail: 'Ollama verifier failed: $error',
         ),
+      );
+    }
+  }
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) async {
+    final probe = await _probeRuntime();
+    if (!probe.modelAvailable) {
+      return AiCommandResult(
+        request: command,
+        status: AiCommandStatus.unavailable,
+        title: command.resultTitle,
+        content: '',
+        detail: probe.detail,
+        providerLabel: 'Local AI unavailable',
+      );
+    }
+
+    try {
+      final payload = await _generateJson(
+        _buildAiCommandPrompt(request: request, command: command),
+      );
+      final title = (_readString(payload['title']) ?? command.resultTitle)
+          .trim();
+      final content =
+          (_readString(payload['response'] ?? payload['content']) ?? '').trim();
+      if (content.isEmpty) {
+        return AiCommandResult(
+          request: command,
+          status: AiCommandStatus.failed,
+          title: command.resultTitle,
+          content: '',
+          detail: 'The local model returned an empty AI response.',
+          providerLabel: 'Ollama $model',
+        );
+      }
+
+      return AiCommandResult(
+        request: command,
+        status: AiCommandStatus.completed,
+        title: title,
+        content: content,
+        detail: 'Generated with Ollama $model.',
+        providerLabel: 'Ollama $model',
+      );
+    } catch (error) {
+      return AiCommandResult(
+        request: command,
+        status: AiCommandStatus.failed,
+        title: command.resultTitle,
+        content: '',
+        detail: 'Ollama AI command failed: $error',
+        providerLabel: 'Ollama $model',
       );
     }
   }
@@ -342,6 +399,54 @@ Enhanced note between <enhanced> tags.
 <enhanced>
 $enhancedText
 </enhanced>
+''';
+  }
+
+  String _buildAiCommandPrompt({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) {
+    final argument = command.argument == null || command.argument!.isEmpty
+        ? 'none'
+        : command.argument!;
+    final taskInstruction = switch (command.kind) {
+      AiCommandKind.explain =>
+        'Explain the referenced note content in clearer, more helpful prose without changing the original note.',
+      AiCommandKind.explainFormula =>
+        'Explain the referenced formula or math block in plain language. Do not rewrite or modify the formula itself.',
+      AiCommandKind.define =>
+        'Define the requested term using the local note context when helpful. Stay concise and grounded.',
+      AiCommandKind.summarize =>
+        'Summarize the referenced context in a compact and faithful way.',
+      AiCommandKind.factCheck =>
+        'Review the referenced context and point out what the user may want to verify. Stay calm and avoid unsupported certainty.',
+    };
+
+    return '''
+Return one JSON object only.
+
+Role: explicit AI command responder for Smart Notebook.
+Task: $taskInstruction
+
+Rules:
+- This is an additive response, not a note rewrite.
+- Use only the command context and command argument below.
+- Keep formulas, symbols, and code exactly as written when quoting them.
+- Be concise, concrete, and helpful.
+- For fact-check requests, do not claim something is false unless the provided context itself contradicts it.
+- If context is empty, say so plainly.
+
+JSON schema:
+{"title":"string","response":"string"}
+
+Mode: ${request.modelMode.name}
+Command: ${command.displayLabel}
+Argument: $argument
+
+Context between <context> tags.
+<context>
+${command.context}
+</context>
 ''';
   }
 
