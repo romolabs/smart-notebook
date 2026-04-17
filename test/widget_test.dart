@@ -337,6 +337,74 @@ Var(X) &= E[X^2] - (E[X])^2
     },
   );
 
+  testWidgets(
+    'Cloud Accurate routes explicit AI requests through the cloud adapter',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final file = File(
+        '${Directory.systemTemp.path}/smart_notebook_widget_cloud_command_test.db',
+      );
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+      addTearDown(() {
+        if (file.existsSync()) {
+          file.deleteSync();
+        }
+      });
+
+      const engine = MockEnhancementEngine(
+        cloudCommandAdapter: _AiCommandCloudModelAdapter(),
+      );
+      final repository = NotebookRepository.forTesting(
+        databasePath: file.path,
+        engine: engine,
+      );
+      addTearDown(repository.close);
+
+      final now = DateTime.now();
+      final note = NotebookNote(
+        id: 'cloud-command-note',
+        title: 'Cloud command note',
+        category: 'General',
+        createdAt: now,
+        updatedAt: now,
+        rawContent: [
+          'Entropy note',
+          'Entropy measures uncertainty in a system.',
+          '//define entropy',
+        ].join('\n'),
+        versions: const [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NotebookWorkspace(
+            engine: engine,
+            repository: repository,
+            settings: AppSettings.defaults,
+            onSaveSettings: (_) async {},
+            initialNotes: [note],
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cloud Accurate'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(find.text('AI Requests'), findsOneWidget);
+      expect(find.text('//define entropy'), findsOneWidget);
+      expect(find.textContaining('Cloud definition'), findsOneWidget);
+    },
+  );
+
   testWidgets('ignores stale enhancement responses and keeps latest snapshot', (
     tester,
   ) async {
@@ -572,6 +640,26 @@ class _AiCommandLocalModelAdapter extends LocalModelAdapter {
           'The formula states that force equals mass times acceleration, so stronger acceleration or more mass implies more force.',
       detail: 'Test AI response completed.',
       providerLabel: 'Test local AI',
+    );
+  }
+}
+
+class _AiCommandCloudModelAdapter extends CloudCommandAdapter {
+  const _AiCommandCloudModelAdapter();
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) async {
+    return AiCommandResult(
+      request: command,
+      status: AiCommandStatus.completed,
+      title: 'Definition',
+      content:
+          'Cloud definition: entropy is a measure of uncertainty or disorder in the system being described.',
+      detail: 'Test cloud AI response completed.',
+      providerLabel: 'OpenAI gpt-5.4-mini',
     );
   }
 }

@@ -295,7 +295,10 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       onSelectionChanged: (selection) {
         setState(() {
           _mode = selection.first;
+          _aiCommandResults = const {};
+          _activeAiCommandId = null;
         });
+        unawaited(_refreshNoteProcessing(_controller.text));
         _persistCurrentVersion();
       },
     );
@@ -1296,20 +1299,32 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           style: theme.textTheme.bodyMedium?.copyWith(height: 1.35),
         ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Text(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stacked = constraints.maxWidth < 520;
+            final providerText = Text(
               result.providerLabel,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: const Color(0xFF51606A),
               ),
-            ),
-            const Spacer(),
-            TextButton(
+            );
+            final actionButton = TextButton(
               onPressed: () => _openAiDrawer(result.request.id),
               child: const Text('Open AI Drawer'),
-            ),
-          ],
+            );
+
+            if (stacked) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  providerText,
+                  Align(alignment: Alignment.centerRight, child: actionButton),
+                ],
+              );
+            }
+
+            return Row(children: [providerText, const Spacer(), actionButton]);
+          },
         ),
       ],
     );
@@ -1997,14 +2012,14 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     }
 
     if (_mode == ModelMode.cloudAccurate) {
-      return AiCommandResult(
-        request: command,
-        status: AiCommandStatus.unavailable,
-        title: command.resultTitle,
-        content: '',
-        detail:
-            'Cloud AI commands are not wired yet in this build. Switch to Local Fast to test explicit AI requests.',
-        providerLabel: 'Cloud AI coming soon',
+      return widget.engine.cloudCommandAdapter.runAiCommand(
+        request: EnhancementRequest(
+          rawContent: rawContent,
+          modelMode: _mode,
+          toggles: _toggles,
+          revisionId: requestRevision,
+        ),
+        command: command,
       );
     }
 
@@ -2552,39 +2567,100 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     final modelController = TextEditingController(
       text: widget.settings.ollamaModel,
     );
+    final openAiBaseUrlController = TextEditingController(
+      text: widget.settings.openAiBaseUrl,
+    );
+    final openAiApiKeyController = TextEditingController(
+      text: widget.settings.openAiApiKey,
+    );
+    final openAiPrimaryModelController = TextEditingController(
+      text: widget.settings.openAiPrimaryModel,
+    );
+    final openAiFastModelController = TextEditingController(
+      text: widget.settings.openAiFastModel,
+    );
 
     final result = await showDialog<AppSettings>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Local Model Settings'),
+          title: const Text('AI Model Settings'),
           content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: baseUrlController,
-                  decoration: const InputDecoration(
-                    labelText: 'Ollama Base URL',
-                    hintText: 'http://127.0.0.1:11434',
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Local model',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: modelController,
-                  decoration: const InputDecoration(
-                    labelText: 'Model',
-                    hintText: 'gemma4:e4b',
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: baseUrlController,
+                    decoration: const InputDecoration(
+                      labelText: 'Ollama Base URL',
+                      hintText: 'http://127.0.0.1:11434',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Use this to point the desktop app at your local Ollama runtime and preferred model.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: modelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Model',
+                      hintText: 'gemma4:e4b',
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Cloud model',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: openAiBaseUrlController,
+                    decoration: const InputDecoration(
+                      labelText: 'OpenAI Base URL',
+                      hintText: 'https://api.openai.com/v1',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: openAiApiKeyController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'OpenAI API Key',
+                      hintText: 'sk-...',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: openAiPrimaryModelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Primary cloud model',
+                      hintText: 'gpt-5.4',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: openAiFastModelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Fallback / mini model',
+                      hintText: 'gpt-5.4-mini',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Use local settings for offline commands, and cloud settings for higher-quality explicit AI requests when you are online.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -2602,6 +2678,18 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                     ollamaModel: modelController.text.trim().isEmpty
                         ? AppSettings.defaults.ollamaModel
                         : modelController.text.trim(),
+                    openAiBaseUrl: openAiBaseUrlController.text.trim().isEmpty
+                        ? AppSettings.defaults.openAiBaseUrl
+                        : openAiBaseUrlController.text.trim(),
+                    openAiApiKey: openAiApiKeyController.text.trim(),
+                    openAiPrimaryModel:
+                        openAiPrimaryModelController.text.trim().isEmpty
+                        ? AppSettings.defaults.openAiPrimaryModel
+                        : openAiPrimaryModelController.text.trim(),
+                    openAiFastModel:
+                        openAiFastModelController.text.trim().isEmpty
+                        ? AppSettings.defaults.openAiFastModel
+                        : openAiFastModelController.text.trim(),
                   ),
                 );
               },
@@ -2614,6 +2702,10 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
 
     baseUrlController.dispose();
     modelController.dispose();
+    openAiBaseUrlController.dispose();
+    openAiApiKeyController.dispose();
+    openAiPrimaryModelController.dispose();
+    openAiFastModelController.dispose();
 
     if (result == null) {
       return;

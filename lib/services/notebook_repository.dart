@@ -77,6 +77,17 @@ class NotebookRepository {
           AppSettings.defaults.ollamaBaseUrl,
       ollamaModel:
           row['ollama_model'] as String? ?? AppSettings.defaults.ollamaModel,
+      openAiBaseUrl:
+          row['openai_base_url'] as String? ??
+          AppSettings.defaults.openAiBaseUrl,
+      openAiApiKey:
+          row['openai_api_key'] as String? ?? AppSettings.defaults.openAiApiKey,
+      openAiPrimaryModel:
+          row['openai_primary_model'] as String? ??
+          AppSettings.defaults.openAiPrimaryModel,
+      openAiFastModel:
+          row['openai_fast_model'] as String? ??
+          AppSettings.defaults.openAiFastModel,
     );
     if (settings.ollamaModel == AppSettings.legacyDefaultModel) {
       final migrated = settings.copyWith(
@@ -94,6 +105,10 @@ class NotebookRepository {
       'id': 'default',
       'ollama_base_url': settings.ollamaBaseUrl,
       'ollama_model': settings.ollamaModel,
+      'openai_base_url': settings.openAiBaseUrl,
+      'openai_api_key': settings.openAiApiKey,
+      'openai_primary_model': settings.openAiPrimaryModel,
+      'openai_fast_model': settings.openAiFastModel,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
@@ -145,7 +160,7 @@ class NotebookRepository {
     _database = await databaseFactory.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON;');
         },
@@ -155,6 +170,20 @@ class NotebookRepository {
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
             await _createSettingsTable(db);
+          }
+          if (oldVersion < 3) {
+            await db.execute(
+              'ALTER TABLE app_settings ADD COLUMN openai_base_url TEXT NOT NULL DEFAULT \'${AppSettings.defaults.openAiBaseUrl}\';',
+            );
+            await db.execute(
+              'ALTER TABLE app_settings ADD COLUMN openai_api_key TEXT NOT NULL DEFAULT \'\';',
+            );
+            await db.execute(
+              'ALTER TABLE app_settings ADD COLUMN openai_primary_model TEXT NOT NULL DEFAULT \'${AppSettings.defaults.openAiPrimaryModel}\';',
+            );
+            await db.execute(
+              'ALTER TABLE app_settings ADD COLUMN openai_fast_model TEXT NOT NULL DEFAULT \'${AppSettings.defaults.openAiFastModel}\';',
+            );
           }
         },
       ),
@@ -203,7 +232,7 @@ class NotebookRepository {
     );
     await _createSettingsTable(db);
     await db.insert('schema_migrations', {
-      'version': 2,
+      'version': 3,
       'applied_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
@@ -214,6 +243,10 @@ class NotebookRepository {
         id TEXT PRIMARY KEY,
         ollama_base_url TEXT NOT NULL,
         ollama_model TEXT NOT NULL,
+        openai_base_url TEXT NOT NULL,
+        openai_api_key TEXT NOT NULL,
+        openai_primary_model TEXT NOT NULL,
+        openai_fast_model TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
     ''');
@@ -222,6 +255,10 @@ class NotebookRepository {
       'id': 'default',
       'ollama_base_url': AppSettings.defaults.ollamaBaseUrl,
       'ollama_model': AppSettings.defaults.ollamaModel,
+      'openai_base_url': AppSettings.defaults.openAiBaseUrl,
+      'openai_api_key': AppSettings.defaults.openAiApiKey,
+      'openai_primary_model': AppSettings.defaults.openAiPrimaryModel,
+      'openai_fast_model': AppSettings.defaults.openAiFastModel,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }

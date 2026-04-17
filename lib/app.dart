@@ -4,6 +4,7 @@ import 'features/workspace/notebook_workspace.dart';
 import 'models/notebook_models.dart';
 import 'services/mock_enhancement_engine.dart';
 import 'services/notebook_repository.dart';
+import 'services/openai_cloud_model_adapter.dart';
 import 'services/ollama_local_model_adapter.dart';
 
 class SmartNotebookApp extends StatefulWidget {
@@ -100,6 +101,12 @@ class _SmartNotebookAppState extends State<SmartNotebookApp> {
       localModelAdapter: OllamaLocalModelAdapter(
         baseUrl: settings.ollamaBaseUrl,
         model: settings.ollamaModel,
+      ),
+      cloudCommandAdapter: OpenAiCloudModelAdapter(
+        baseUrl: settings.openAiBaseUrl,
+        apiKey: settings.openAiApiKey,
+        preferredModel: settings.openAiPrimaryModel,
+        fallbackMiniModel: settings.openAiFastModel,
       ),
     );
   }

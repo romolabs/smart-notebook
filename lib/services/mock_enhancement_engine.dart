@@ -53,9 +53,19 @@ abstract class LocalModelAdapter {
   });
 }
 
+abstract class CloudCommandAdapter {
+  const CloudCommandAdapter();
+
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  });
+}
+
 class MockEnhancementEngine implements EnhancementEngine {
   const MockEnhancementEngine({
     this.localModelAdapter = const UnavailableLocalModelAdapter(),
+    this.cloudCommandAdapter = const UnavailableCloudCommandAdapter(),
     this.parser = const NoteParser(),
     this.formatter = const DeterministicFormatter(),
     this.acceptanceGate = const AcceptanceGate(),
@@ -65,6 +75,7 @@ class MockEnhancementEngine implements EnhancementEngine {
   });
 
   final LocalModelAdapter localModelAdapter;
+  final CloudCommandAdapter cloudCommandAdapter;
   final NoteParser parser;
   final DeterministicFormatter formatter;
   final AcceptanceGate acceptanceGate;
@@ -563,6 +574,25 @@ class UnavailableLocalModelAdapter extends LocalModelAdapter {
       content: '',
       detail: 'No local model runtime detected.',
       providerLabel: 'Local AI unavailable',
+    );
+  }
+}
+
+class UnavailableCloudCommandAdapter extends CloudCommandAdapter {
+  const UnavailableCloudCommandAdapter();
+
+  @override
+  Future<AiCommandResult> runAiCommand({
+    required EnhancementRequest request,
+    required AiCommandRequest command,
+  }) async {
+    return AiCommandResult(
+      request: command,
+      status: AiCommandStatus.unavailable,
+      title: command.resultTitle,
+      content: '',
+      detail: 'Cloud AI is not configured yet.',
+      providerLabel: 'Cloud AI unavailable',
     );
   }
 }

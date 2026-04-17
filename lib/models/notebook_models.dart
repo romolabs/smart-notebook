@@ -69,21 +69,49 @@ enum RouteCapability {
 enum RouteExecution { local, deterministicOnly, deferredCloud }
 
 class AppSettings {
-  const AppSettings({required this.ollamaBaseUrl, required this.ollamaModel});
+  const AppSettings({
+    required this.ollamaBaseUrl,
+    required this.ollamaModel,
+    required this.openAiBaseUrl,
+    required this.openAiApiKey,
+    required this.openAiPrimaryModel,
+    required this.openAiFastModel,
+  });
 
   static const legacyDefaultModel = 'gemma3:1b';
   static const defaults = AppSettings(
     ollamaBaseUrl: 'http://127.0.0.1:11434',
     ollamaModel: 'gemma4:e4b',
+    openAiBaseUrl: 'https://api.openai.com/v1',
+    openAiApiKey: '',
+    openAiPrimaryModel: 'gpt-5.4',
+    openAiFastModel: 'gpt-5.4-mini',
   );
 
   final String ollamaBaseUrl;
   final String ollamaModel;
+  final String openAiBaseUrl;
+  final String openAiApiKey;
+  final String openAiPrimaryModel;
+  final String openAiFastModel;
 
-  AppSettings copyWith({String? ollamaBaseUrl, String? ollamaModel}) {
+  bool get hasOpenAiKey => openAiApiKey.trim().isNotEmpty;
+
+  AppSettings copyWith({
+    String? ollamaBaseUrl,
+    String? ollamaModel,
+    String? openAiBaseUrl,
+    String? openAiApiKey,
+    String? openAiPrimaryModel,
+    String? openAiFastModel,
+  }) {
     return AppSettings(
       ollamaBaseUrl: ollamaBaseUrl ?? this.ollamaBaseUrl,
       ollamaModel: ollamaModel ?? this.ollamaModel,
+      openAiBaseUrl: openAiBaseUrl ?? this.openAiBaseUrl,
+      openAiApiKey: openAiApiKey ?? this.openAiApiKey,
+      openAiPrimaryModel: openAiPrimaryModel ?? this.openAiPrimaryModel,
+      openAiFastModel: openAiFastModel ?? this.openAiFastModel,
     );
   }
 }
