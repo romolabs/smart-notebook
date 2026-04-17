@@ -712,6 +712,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             label: 'Math',
             onPressed: _insertMathBlock,
           ),
+          _toolbarActionButton(
+            icon: Icons.table_chart_outlined,
+            label: 'Table',
+            onPressed: _insertTableBlock,
+          ),
           Text(
             'Writer tools',
             style: theme.textTheme.labelMedium?.copyWith(
@@ -802,8 +807,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
 
   Widget _buildEnhancedContentCard(BuildContext context, ThemeData theme) {
     final structure = _contentParser.parse(_snapshot.enhancedContent);
-    final hasMathBlocks = structure.blocks.any(
-      (block) => block.kind == BlockKind.math,
+    final hasStructuredBlocks = structure.blocks.any(
+      (block) => block.kind == BlockKind.math || block.kind == BlockKind.table,
     );
 
     return Container(
@@ -815,7 +820,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: const Color(0xFFD8DBD7)),
       ),
-      child: hasMathBlocks
+      child: hasStructuredBlocks
           ? _buildEnhancedStructuredContent(context, theme, structure)
           : SelectableText(
               _snapshot.enhancedContent,
@@ -847,6 +852,9 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   ) {
     if (block.kind == BlockKind.math) {
       return _buildEnhancedMathBlock(context, theme, block);
+    }
+    if (block.kind == BlockKind.table) {
+      return _buildEnhancedTableBlock(context, theme, block);
     }
 
     final text = block.lines
@@ -898,6 +906,137 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     final trimmed = line.trimmed;
     return line.kind == LineKind.directive &&
         (trimmed == '/math' || trimmed == '/end');
+  }
+
+  Widget _buildEnhancedTableBlock(
+    BuildContext context,
+    ThemeData theme,
+    BlockNode block,
+  ) {
+    final rows = block.lines
+        .where((line) => !_isTableDirectiveLine(line))
+        .map((line) => _parseTableRow(line.sourceLine))
+        .whereType<List<String>>()
+        .toList(growable: false);
+
+    if (rows.isEmpty) {
+      final fallbackText = block.lines
+          .map((line) => line.sourceLine.trimRight())
+          .join('\n')
+          .trimRight();
+      return SelectableText(
+        fallbackText,
+        style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+      );
+    }
+
+    final normalizedRows = _normalizeTableRows(rows);
+    final hasDividerRow =
+        normalizedRows.length > 1 && _isDividerRow(normalizedRows[1]);
+    final header = normalizedRows.first;
+    final bodyRows = hasDividerRow
+        ? normalizedRows.skip(2).toList(growable: false)
+        : normalizedRows.skip(1).toList(growable: false);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD9E2EC)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Table(
+          defaultColumnWidth: const IntrinsicColumnWidth(),
+          border: TableBorder.all(color: const Color(0xFFD9E2EC)),
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          children: [
+            TableRow(
+              decoration: const BoxDecoration(color: Color(0xFFEAF2F8)),
+              children: [
+                for (final cell in header)
+                  _buildTableCell(context, cell, isHeader: true, theme: theme),
+              ],
+            ),
+            for (final row in bodyRows)
+              TableRow(
+                children: [
+                  for (final cell in row)
+                    _buildTableCell(context, cell, theme: theme),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTableCell(
+    BuildContext context,
+    String value, {
+    required ThemeData theme,
+    bool isHeader = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: SelectableText(
+        value,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          fontWeight: isHeader ? FontWeight.w700 : FontWeight.w500,
+          color: isHeader ? const Color(0xFF183041) : null,
+        ),
+      ),
+    );
+  }
+
+  List<List<String>> _normalizeTableRows(List<List<String>> rows) {
+    final columnCount = rows.fold<int>(
+      0,
+      (current, row) => row.length > current ? row.length : current,
+    );
+    return rows
+        .map(
+          (row) => [
+            ...row,
+            for (var index = row.length; index < columnCount; index++) '',
+          ],
+        )
+        .toList(growable: false);
+  }
+
+  List<String>? _parseTableRow(String rawLine) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty || !trimmed.contains('|')) {
+      return null;
+    }
+
+    final stripped = trimmed.startsWith('|') ? trimmed.substring(1) : trimmed;
+    final withoutTrailing = stripped.endsWith('|')
+        ? stripped.substring(0, stripped.length - 1)
+        : stripped;
+    final cells = withoutTrailing
+        .split('|')
+        .map((cell) => cell.trim())
+        .toList(growable: false);
+
+    if (cells.length < 2) {
+      return null;
+    }
+    return cells;
+  }
+
+  bool _isDividerRow(List<String> row) {
+    return row.every(
+      (cell) => cell.isNotEmpty && RegExp(r'^:?-{3,}:?$').hasMatch(cell),
+    );
+  }
+
+  bool _isTableDirectiveLine(LineNode line) {
+    final trimmed = line.trimmed;
+    return line.kind == LineKind.directive &&
+        (trimmed == '/table' || trimmed == '/end');
   }
 
   Widget _buildEnhancedArtifactsSection(BuildContext context) {
@@ -1856,14 +1995,12 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   }
 
   void _insertMathBlock() {
-    final selection = _controller.selection;
-    final originalText = _controller.text;
-    final start = selection.isValid ? selection.start : originalText.length;
-    final end = selection.isValid ? selection.end : originalText.length;
-    final insertion = _authoringDirectiveService.insertMathBlock(
-      originalText: originalText,
-      selectionStart: start,
-      selectionEnd: end,
+    final insertion = _buildRawEditorInsertion(
+      (originalText, start, end) => _authoringDirectiveService.insertMathBlock(
+        originalText: originalText,
+        selectionStart: start,
+        selectionEnd: end,
+      ),
     );
 
     _controller.value = _controller.value.copyWith(
@@ -1873,6 +2010,35 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     );
     _editorFocusNode.requestFocus();
     _queueEnhancement(insertion.text);
+  }
+
+  void _insertTableBlock() {
+    final insertion = _buildRawEditorInsertion(
+      (originalText, start, end) => _authoringDirectiveService.insertTableBlock(
+        originalText: originalText,
+        selectionStart: start,
+        selectionEnd: end,
+      ),
+    );
+
+    _controller.value = _controller.value.copyWith(
+      text: insertion.text,
+      selection: TextSelection.collapsed(offset: insertion.selectionOffset),
+      composing: TextRange.empty,
+    );
+    _editorFocusNode.requestFocus();
+    _queueEnhancement(insertion.text);
+  }
+
+  ShortcutExpansionResult _buildRawEditorInsertion(
+    ShortcutExpansionResult Function(String originalText, int start, int end)
+    builder,
+  ) {
+    final selection = _controller.selection;
+    final originalText = _controller.text;
+    final start = selection.isValid ? selection.start : originalText.length;
+    final end = selection.isValid ? selection.end : originalText.length;
+    return builder(originalText, start, end);
   }
 
   Future<void> _runEnhancement(String rawContent) async {

@@ -92,6 +92,91 @@ void main() {
     expect(textField.controller?.selection.baseOffset, '/math\n'.length);
   });
 
+  testWidgets('raw editor expands /table into a table scaffold', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final editor = find.byType(TextField).at(1);
+    await tester.enterText(editor, '/table ');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final textField = tester.widget<TextField>(editor);
+    expect(
+      textField.controller?.text,
+      '/table\n| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |\n/end',
+    );
+    expect(textField.controller?.selection.baseOffset, '/table\n| '.length);
+  });
+
+  testWidgets('enhanced pane renders /table blocks as table widgets', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final file = File(
+      '${Directory.systemTemp.path}/smart_notebook_widget_table_block_test.db',
+    );
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    addTearDown(() {
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    });
+
+    final now = DateTime.now();
+    final note = NotebookNote(
+      id: 'table-note',
+      title: 'Table note',
+      category: 'Study',
+      createdAt: now,
+      updatedAt: now,
+      rawContent: r'''
+/table
+| Name | Score |
+| --- | --- |
+| Alice | 10 |
+/end
+
+- check assumptions
+''',
+      versions: const [],
+    );
+
+    final repository = NotebookRepository.forTesting(
+      databasePath: file.path,
+      engine: const MockEnhancementEngine(),
+    );
+    addTearDown(repository.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookWorkspace(
+          engine: const MockEnhancementEngine(),
+          repository: repository,
+          settings: AppSettings.defaults,
+          onSaveSettings: (_) async {},
+          initialNotes: [note],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Table), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('Score'), findsOneWidget);
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.text('10'), findsOneWidget);
+    expect(find.textContaining('check assumptions'), findsWidgets);
+  });
+
   testWidgets('enhanced pane renders /math blocks as math widgets', (
     tester,
   ) async {

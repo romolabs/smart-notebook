@@ -12,6 +12,7 @@ class AuthoringDirectiveService {
   const AuthoringDirectiveService();
 
   static const String mathDirectiveStart = '/math';
+  static const String tableDirectiveStart = '/table';
   static const String directiveEnd = '/end';
 
   static const Map<String, String> _symbolShortcuts = {
@@ -90,7 +91,7 @@ class AuthoringDirectiveService {
       );
     }
 
-    if (token == mathDirectiveStart && _isMathBlockTrigger(trigger)) {
+    if (token == mathDirectiveStart && _isBlockDirectiveTrigger(trigger)) {
       return _replaceToken(
         nextText: nextText,
         tokenStart: tokenStart,
@@ -98,6 +99,17 @@ class AuthoringDirectiveService {
         selectionOffset: selectionOffset,
         replacement: _mathBlockSnippet(),
         caretOffset: tokenStart + '$mathDirectiveStart\n'.length,
+      );
+    }
+
+    if (token == tableDirectiveStart && _isBlockDirectiveTrigger(trigger)) {
+      return _replaceToken(
+        nextText: nextText,
+        tokenStart: tokenStart,
+        tokenEnd: tokenEnd,
+        selectionOffset: selectionOffset,
+        replacement: _tableBlockSnippet(),
+        caretOffset: tokenStart + '$tableDirectiveStart\n| '.length,
       );
     }
 
@@ -109,17 +121,27 @@ class AuthoringDirectiveService {
     required int selectionStart,
     required int selectionEnd,
   }) {
-    final start = selectionStart < 0 ? originalText.length : selectionStart;
-    final end = selectionEnd < 0 ? originalText.length : selectionEnd;
-    final selectedText = originalText.substring(start, end);
-    final snippet = _mathBlockSnippet(body: selectedText);
-    final caretOffset =
-        start + '$mathDirectiveStart\n'.length + selectedText.length;
-    final updatedText = originalText.replaceRange(start, end, snippet);
+    return _insertDirectiveBlock(
+      originalText: originalText,
+      selectionStart: selectionStart,
+      selectionEnd: selectionEnd,
+      prefix: '$mathDirectiveStart\n',
+      snippetBuilder: _mathBlockSnippet,
+    );
+  }
 
-    return ShortcutExpansionResult(
-      text: updatedText,
-      selectionOffset: caretOffset,
+  ShortcutExpansionResult insertTableBlock({
+    required String originalText,
+    required int selectionStart,
+    required int selectionEnd,
+  }) {
+    return _insertDirectiveBlock(
+      originalText: originalText,
+      selectionStart: selectionStart,
+      selectionEnd: selectionEnd,
+      prefix: '$tableDirectiveStart\n',
+      snippetBuilder: _tableBlockSnippet,
+      emptyCaretOffsetAdjustment: '| '.length,
     );
   }
 
@@ -131,8 +153,34 @@ class AuthoringDirectiveService {
     return value == ' ';
   }
 
-  bool _isMathBlockTrigger(String value) {
+  bool _isBlockDirectiveTrigger(String value) {
     return value == ' ' || value == '\n';
+  }
+
+  ShortcutExpansionResult _insertDirectiveBlock({
+    required String originalText,
+    required int selectionStart,
+    required int selectionEnd,
+    required String prefix,
+    required String Function({String body}) snippetBuilder,
+    int emptyCaretOffsetAdjustment = 0,
+  }) {
+    final start = selectionStart < 0 ? originalText.length : selectionStart;
+    final end = selectionEnd < 0 ? originalText.length : selectionEnd;
+    final selectedText = originalText.substring(start, end);
+    final snippet = snippetBuilder(body: selectedText);
+    final caretOffset =
+        start +
+        prefix.length +
+        (selectedText.isEmpty
+            ? emptyCaretOffsetAdjustment
+            : selectedText.length);
+    final updatedText = originalText.replaceRange(start, end, snippet);
+
+    return ShortcutExpansionResult(
+      text: updatedText,
+      selectionOffset: caretOffset,
+    );
   }
 
   ShortcutExpansionResult _replaceToken({
@@ -162,6 +210,15 @@ class AuthoringDirectiveService {
 
     final normalizedBody = body.endsWith('\n') ? body : '$body\n';
     return '$mathDirectiveStart\n$normalizedBody$directiveEnd';
+  }
+
+  String _tableBlockSnippet({String body = ''}) {
+    if (body.isEmpty) {
+      return '$tableDirectiveStart\n| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |\n$directiveEnd';
+    }
+
+    final normalizedBody = body.endsWith('\n') ? body : '$body\n';
+    return '$tableDirectiveStart\n$normalizedBody$directiveEnd';
   }
 
   int _tokenStart(String text, int tokenEnd) {

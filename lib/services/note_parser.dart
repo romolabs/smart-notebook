@@ -4,6 +4,7 @@ class NoteParser {
   const NoteParser();
 
   static const _mathDirectiveStart = '/math';
+  static const _tableDirectiveStart = '/table';
   static const _directiveEnd = '/end';
 
   static final RegExp _headingPattern = RegExp(r'^#{1,6}\s+');
@@ -37,12 +38,14 @@ class NoteParser {
     var inCodeFence = false;
     var inBlockMath = false;
     var inDirectiveMath = false;
+    var inDirectiveTable = false;
     String? blockMathCloser;
 
     for (var index = 0; index < sourceLines.length; index++) {
       final line = sourceLines[index];
       final trimmed = line.trim();
       final isMathDirectiveStart = trimmed == _mathDirectiveStart;
+      final isTableDirectiveStart = trimmed == _tableDirectiveStart;
       final isDirectiveEnd = trimmed == _directiveEnd;
       final isMathDirectiveBoundary =
           isMathDirectiveStart || (isDirectiveEnd && inDirectiveMath);
@@ -54,6 +57,11 @@ class NoteParser {
         inBlockMath: inBlockMath,
         inDirectiveMath: inDirectiveMath,
         isMathDirectiveBoundary: isMathDirectiveBoundary,
+      );
+      final directiveBlockKind = _directiveBlockKind(
+        trimmed,
+        inDirectiveMath: inDirectiveMath,
+        inDirectiveTable: inDirectiveTable,
       );
       final kind = _classifyLine(
         trimmed,
@@ -84,6 +92,12 @@ class NoteParser {
         } else if (isDirectiveEnd && inDirectiveMath) {
           inDirectiveMath = false;
         }
+
+        if (isTableDirectiveStart) {
+          inDirectiveTable = true;
+        } else if (isDirectiveEnd && inDirectiveTable) {
+          inDirectiveTable = false;
+        }
       }
 
       final node = LineNode(
@@ -93,6 +107,7 @@ class NoteParser {
         kind: kind,
         indent: line.length - line.trimLeft().length,
         protectedSpans: lineProtectedSpans,
+        directiveBlockKind: directiveBlockKind,
         headingLevel: _headingLevel(trimmed),
         orderedIndex: _orderedIndex(trimmed),
         checkboxChecked: _checkboxChecked(trimmed),
@@ -145,7 +160,9 @@ class NoteParser {
     if (inCodeFence || trimmed.startsWith('```')) {
       return LineKind.code;
     }
-    if (trimmed == _mathDirectiveStart || trimmed == _directiveEnd) {
+    if (trimmed == _mathDirectiveStart ||
+        trimmed == _tableDirectiveStart ||
+        trimmed == _directiveEnd) {
       return LineKind.directive;
     }
     if (_headingPattern.hasMatch(trimmed)) {
@@ -472,7 +489,7 @@ class NoteParser {
       case BlockKind.mixed:
         return true;
       case BlockKind.table:
-        return lineKind == LineKind.tableRow;
+        return lineKind == LineKind.tableRow || lineKind == LineKind.directive;
       case BlockKind.heading:
       case BlockKind.bulletList:
       case BlockKind.orderedList:
@@ -493,7 +510,7 @@ class NoteParser {
 
     return switch (line.kind) {
       LineKind.blank => BlockKind.blank,
-      LineKind.directive => BlockKind.math,
+      LineKind.directive => line.directiveBlockKind ?? BlockKind.mixed,
       LineKind.paragraph => BlockKind.paragraph,
       LineKind.bullet => BlockKind.bulletList,
       LineKind.orderedItem => BlockKind.orderedList,
@@ -505,6 +522,26 @@ class NoteParser {
       LineKind.tableRow => BlockKind.table,
       LineKind.unknown => BlockKind.mixed,
     };
+  }
+
+  BlockKind? _directiveBlockKind(
+    String trimmed, {
+    required bool inDirectiveMath,
+    required bool inDirectiveTable,
+  }) {
+    if (trimmed == _mathDirectiveStart) {
+      return BlockKind.math;
+    }
+    if (trimmed == _tableDirectiveStart) {
+      return BlockKind.table;
+    }
+    if (trimmed == _directiveEnd && inDirectiveMath) {
+      return BlockKind.math;
+    }
+    if (trimmed == _directiveEnd && inDirectiveTable) {
+      return BlockKind.table;
+    }
+    return null;
   }
 
   StructureMetrics _buildMetrics(

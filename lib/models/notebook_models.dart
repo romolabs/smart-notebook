@@ -304,6 +304,7 @@ class LineNode {
     required this.kind,
     required this.indent,
     this.protectedSpans = const [],
+    this.directiveBlockKind,
     this.headingLevel,
     this.orderedIndex,
     this.checkboxChecked,
@@ -317,6 +318,7 @@ class LineNode {
   final LineKind kind;
   final int indent;
   final List<ProtectedSpan> protectedSpans;
+  final BlockKind? directiveBlockKind;
   final int? headingLevel;
   final int? orderedIndex;
   final bool? checkboxChecked;
@@ -328,6 +330,7 @@ class LineNode {
   bool get isEditable =>
       !isBlank &&
       !hasProtectedContent &&
+      kind != LineKind.directive &&
       kind != LineKind.code &&
       kind != LineKind.heading &&
       kind != LineKind.tableRow;

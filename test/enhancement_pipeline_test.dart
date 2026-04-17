@@ -106,6 +106,21 @@ meeting notes
     expect(expansion.selectionOffset, '/math\n'.length);
   });
 
+  test('authoring directives expand /table into a table scaffold', () {
+    final expansion = directives.expandTrailingShortcut(
+      previousText: '/tabl',
+      nextText: '/table ',
+      selectionOffset: 7,
+    );
+
+    expect(expansion, isNotNull);
+    expect(
+      expansion!.text,
+      '/table\n| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |\n/end',
+    );
+    expect(expansion.selectionOffset, '/table\n| '.length);
+  });
+
   test('authoring directives wrap selected text in a math block', () {
     final insertion = directives.insertMathBlock(
       originalText: 'proof notes\nE[X] = 4',
@@ -115,6 +130,20 @@ meeting notes
 
     expect(insertion.text, 'proof notes\n/math\nE[X] = 4\n/end');
     expect(insertion.selectionOffset, 'proof notes\n/math\nE[X] = 4'.length);
+  });
+
+  test('authoring directives wrap selected text in a table block', () {
+    final insertion = directives.insertTableBlock(
+      originalText: 'metrics\n| Name | Score |',
+      selectionStart: 'metrics\n'.length,
+      selectionEnd: 'metrics\n| Name | Score |'.length,
+    );
+
+    expect(insertion.text, 'metrics\n/table\n| Name | Score |\n/end');
+    expect(
+      insertion.selectionOffset,
+      'metrics\n/table\n| Name | Score |'.length,
+    );
   });
 
   test('authoring directives keep line commands space-triggered only', () {
@@ -168,6 +197,32 @@ Var(X) &= E[X^2] - (E[X])^2
       mathBlock.lines.length,
     );
     expect(structure.metrics.mathLineCount, greaterThanOrEqualTo(4));
+  });
+
+  test('parser groups /table directives into a rendered table block', () {
+    final structure = parser.parse(r'''
+/table
+| Name | Score |
+| --- | --- |
+| Alice | 10 |
+/end
+
+- next
+''');
+
+    final tableBlock = structure.blocks.firstWhere(
+      (block) => block.kind == BlockKind.table,
+    );
+
+    expect(tableBlock.lines.first.trimmed, '/table');
+    expect(tableBlock.lines.last.trimmed, '/end');
+    expect(
+      tableBlock.lines.where((line) => line.kind == LineKind.tableRow).length,
+      3,
+    );
+    expect(tableBlock.lines.first.directiveBlockKind, BlockKind.table);
+    expect(structure.metrics.tableRowCount, 3);
+    expect(structure.blocks.last.kind, BlockKind.bulletList);
   });
 
   test('acceptance gate rejects structure-breaking formatter drafts', () {
