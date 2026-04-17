@@ -67,6 +67,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   final _controller = TextEditingController();
   final _searchController = TextEditingController();
   final _notesRailScrollController = ScrollController();
+  final _editorFocusNode = FocusNode();
   static const _authoringDirectiveService = AuthoringDirectiveService();
   static const _contentParser = NoteParser();
 
@@ -105,7 +106,6 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   String? _loadError;
   String _searchQuery = '';
   int _enhancementRevision = 0;
-  bool _isApplyingAuthoringExpansion = false;
 
   @override
   void initState() {
@@ -121,6 +121,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   void dispose() {
     _enhancementDebounce?.cancel();
     _persistDebounce?.cancel();
+    _editorFocusNode.dispose();
     _controller.dispose();
     _searchController.dispose();
     _notesRailScrollController.dispose();
@@ -559,6 +560,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           const SizedBox(height: 16),
           Expanded(
             child: TextField(
+              focusNode: _editorFocusNode,
               controller: _controller,
               onChanged: _handleRawEditorChanged,
               expands: true,
@@ -704,6 +706,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             icon: Icons.check_box_outlined,
             label: 'Checklist',
             onPressed: () => _insertSnippet('- [ ] '),
+          ),
+          _toolbarActionButton(
+            icon: Icons.calculate_outlined,
+            label: 'Math',
+            onPressed: _insertMathBlock,
           ),
           Text(
             'Writer tools',
@@ -1570,12 +1577,6 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   }
 
   void _handleRawEditorChanged(String value) {
-    if (_isApplyingAuthoringExpansion) {
-      _isApplyingAuthoringExpansion = false;
-      _queueEnhancement(value);
-      return;
-    }
-
     final selected = _selectedNote;
     if (selected == null) {
       return;
@@ -1591,12 +1592,12 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       return;
     }
 
-    _isApplyingAuthoringExpansion = true;
     _controller.value = _controller.value.copyWith(
       text: expansion.text,
       selection: TextSelection.collapsed(offset: expansion.selectionOffset),
       composing: TextRange.empty,
     );
+    _queueEnhancement(expansion.text);
   }
 
   Future<void> _refreshEnhancement() async {
@@ -1850,7 +1851,28 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       selection: TextSelection.collapsed(offset: caretOffset),
       composing: TextRange.empty,
     );
+    _editorFocusNode.requestFocus();
     _queueEnhancement(updatedText);
+  }
+
+  void _insertMathBlock() {
+    final selection = _controller.selection;
+    final originalText = _controller.text;
+    final start = selection.isValid ? selection.start : originalText.length;
+    final end = selection.isValid ? selection.end : originalText.length;
+    final insertion = _authoringDirectiveService.insertMathBlock(
+      originalText: originalText,
+      selectionStart: start,
+      selectionEnd: end,
+    );
+
+    _controller.value = _controller.value.copyWith(
+      text: insertion.text,
+      selection: TextSelection.collapsed(offset: insertion.selectionOffset),
+      composing: TextRange.empty,
+    );
+    _editorFocusNode.requestFocus();
+    _queueEnhancement(insertion.text);
   }
 
   Future<void> _runEnhancement(String rawContent) async {

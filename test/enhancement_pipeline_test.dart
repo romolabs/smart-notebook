@@ -66,6 +66,84 @@ meeting notes
     expect(expansion, isNull);
   });
 
+  test('authoring directives expand line commands into note structure', () {
+    final heading = directives.expandTrailingShortcut(
+      previousText: '/h1',
+      nextText: '/h1 ',
+      selectionOffset: 4,
+    );
+    final bullet = directives.expandTrailingShortcut(
+      previousText: '/bulle',
+      nextText: '/bullet ',
+      selectionOffset: 8,
+    );
+    final checklist = directives.expandTrailingShortcut(
+      previousText: '/chec',
+      nextText: '/check ',
+      selectionOffset: 7,
+    );
+
+    expect(heading, isNotNull);
+    expect(heading!.text, '# ');
+    expect(heading.selectionOffset, 2);
+    expect(bullet, isNotNull);
+    expect(bullet!.text, '- ');
+    expect(bullet.selectionOffset, 2);
+    expect(checklist, isNotNull);
+    expect(checklist!.text, '- [ ] ');
+    expect(checklist.selectionOffset, 6);
+  });
+
+  test('authoring directives expand /math into a protected block scaffold', () {
+    final expansion = directives.expandTrailingShortcut(
+      previousText: '/mat',
+      nextText: '/math ',
+      selectionOffset: 6,
+    );
+
+    expect(expansion, isNotNull);
+    expect(expansion!.text, '/math\n\n/end');
+    expect(expansion.selectionOffset, '/math\n'.length);
+  });
+
+  test('authoring directives wrap selected text in a math block', () {
+    final insertion = directives.insertMathBlock(
+      originalText: 'proof notes\nE[X] = 4',
+      selectionStart: 'proof notes\n'.length,
+      selectionEnd: 'proof notes\nE[X] = 4'.length,
+    );
+
+    expect(insertion.text, 'proof notes\n/math\nE[X] = 4\n/end');
+    expect(insertion.selectionOffset, 'proof notes\n/math\nE[X] = 4'.length);
+  });
+
+  test('authoring directives keep line commands space-triggered only', () {
+    expect(
+      directives.expandTrailingShortcut(
+        previousText: '/h1',
+        nextText: '/h1\n',
+        selectionOffset: 4,
+      ),
+      isNull,
+    );
+    expect(
+      directives.expandTrailingShortcut(
+        previousText: '/bulle',
+        nextText: '/bullet\t',
+        selectionOffset: 8,
+      ),
+      isNull,
+    );
+    expect(
+      directives.expandTrailingShortcut(
+        previousText: '/chec',
+        nextText: '/check\n',
+        selectionOffset: 7,
+      ),
+      isNull,
+    );
+  });
+
   test('parser groups /math directives into a protected math block', () {
     final structure = parser.parse(r'''
 proof notes

@@ -55,6 +55,43 @@ void main() {
     expect(find.textContaining('σ'), findsWidgets);
   });
 
+  testWidgets('raw editor expands structural commands deterministically', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final editor = find.byType(TextField).at(1);
+    await tester.enterText(editor, '/h1 ');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    var textField = tester.widget<TextField>(editor);
+    expect(textField.controller?.text, '# ');
+
+    await tester.enterText(editor, '/math ');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    textField = tester.widget<TextField>(editor);
+    expect(textField.controller?.text, '/math\n\n/end');
+    expect(textField.controller?.selection.baseOffset, '/math\n'.length);
+  });
+
+  testWidgets('writer toolbar inserts a math block scaffold', (tester) async {
+    await _pumpApp(tester);
+
+    final editor = find.byType(TextField).at(1);
+    await tester.enterText(editor, '');
+    await tester.pump();
+    await tester.tap(find.text('Math'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final textField = tester.widget<TextField>(editor);
+    expect(textField.controller?.text, '/math\n\n/end');
+    expect(textField.controller?.selection.baseOffset, '/math\n'.length);
+  });
+
   testWidgets('enhanced pane renders /math blocks as math widgets', (
     tester,
   ) async {
