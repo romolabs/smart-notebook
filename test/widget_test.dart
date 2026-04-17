@@ -39,6 +39,21 @@ void main() {
     expect(find.text('Lecture scraps'), findsNWidgets(2));
   });
 
+  testWidgets('raw editor expands inline symbol shortcuts deterministically', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final editor = find.byType(TextField).at(1);
+    await tester.enterText(editor, '/sigma ');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final textField = tester.widget<TextField>(editor);
+    expect(textField.controller?.text, 'σ ');
+    expect(find.textContaining('σ'), findsWidgets);
+  });
+
   testWidgets(
     'renders trust-first merged output and keeps model artifacts out of visible panes',
     (tester) async {

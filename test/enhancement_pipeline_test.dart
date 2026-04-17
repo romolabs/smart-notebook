@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_notebook/models/notebook_models.dart';
 import 'package:smart_notebook/services/acceptance_gate.dart';
+import 'package:smart_notebook/services/authoring_directive_service.dart';
 import 'package:smart_notebook/services/deterministic_formatter.dart';
 import 'package:smart_notebook/services/mock_enhancement_engine.dart';
 import 'package:smart_notebook/services/note_parser.dart';
@@ -11,6 +12,7 @@ void main() {
   const formatter = DeterministicFormatter();
   const gate = AcceptanceGate();
   const merger = ProposalMerger();
+  const directives = AuthoringDirectiveService();
   const toggles = ProcessorToggles(
     spelling: true,
     formatting: true,
@@ -41,6 +43,28 @@ meeting notes
       expect(champion.text, contains('2. email team'));
     },
   );
+
+  test('authoring directives expand trailing symbol shortcuts', () {
+    final expansion = directives.expandTrailingShortcut(
+      previousText: '/sigm',
+      nextText: '/sigma ',
+      selectionOffset: 7,
+    );
+
+    expect(expansion, isNotNull);
+    expect(expansion!.text, 'σ ');
+    expect(expansion.selectionOffset, 2);
+  });
+
+  test('authoring directives ignore unmatched shortcuts', () {
+    final expansion = directives.expandTrailingShortcut(
+      previousText: '/sigm',
+      nextText: '/sigmx ',
+      selectionOffset: 7,
+    );
+
+    expect(expansion, isNull);
+  });
 
   test('acceptance gate rejects structure-breaking formatter drafts', () {
     final champion = formatter.buildChampionDraft(

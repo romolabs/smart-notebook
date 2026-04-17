@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../models/notebook_models.dart';
+import '../../services/authoring_directive_service.dart';
 import '../../services/mock_enhancement_engine.dart';
 import '../../services/notebook_repository.dart';
 
@@ -64,6 +65,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   final _controller = TextEditingController();
   final _searchController = TextEditingController();
   final _notesRailScrollController = ScrollController();
+  static const _authoringDirectiveService = AuthoringDirectiveService();
 
   List<NotebookNote> _notes = const [];
   NotebookNote? _selectedNote;
@@ -100,6 +102,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   String? _loadError;
   String _searchQuery = '';
   int _enhancementRevision = 0;
+  bool _isApplyingAuthoringExpansion = false;
 
   @override
   void initState() {
@@ -554,7 +557,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
           Expanded(
             child: TextField(
               controller: _controller,
-              onChanged: _queueEnhancement,
+              onChanged: _handleRawEditorChanged,
               expands: true,
               minLines: null,
               maxLines: null,
@@ -722,75 +725,84 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       subtitle: _mode == ModelMode.localFast
           ? 'Low-latency cleanup powered by local processing.'
           : 'Higher-confidence pass prepared for cloud-backed verification.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildEnhancedArtifactsSection(context),
-          const SizedBox(height: 12),
-          _buildRoutePlanCard(context),
-          const SizedBox(height: 12),
-          _buildProcessorStatusRow(context),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: const Color(0xFFD8DBD7)),
-              ),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  _snapshot.enhancedContent,
-                  style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Flexible(
-            child: SingleChildScrollView(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final stackCards = constraints.maxWidth < 700;
-                  if (stackCards) {
-                    return Column(
-                      children: [
-                        _buildChangesCard(context),
-                        const SizedBox(height: 14),
-                        _buildVerificationCard(context, selected: selected),
-                        const SizedBox(height: 14),
-                        _buildVersionHistoryCard(context, selected: selected),
-                      ],
-                    );
-                  }
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildEnhancedArtifactsSection(context),
+                  const SizedBox(height: 12),
+                  _buildRoutePlanCard(context),
+                  const SizedBox(height: 12),
+                  _buildProcessorStatusRow(context),
+                  const SizedBox(height: 16),
+                  _buildEnhancedContentCard(context, theme),
+                  const SizedBox(height: 16),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final stackCards = constraints.maxWidth < 700;
+                      if (stackCards) {
+                        return Column(
+                          children: [
+                            _buildChangesCard(context),
+                            const SizedBox(height: 14),
+                            _buildVerificationCard(context, selected: selected),
+                            const SizedBox(height: 14),
+                            _buildVersionHistoryCard(
+                              context,
+                              selected: selected,
+                            ),
+                          ],
+                        );
+                      }
 
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _buildChangesCard(context)),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _buildVerificationCard(
-                          context,
-                          selected: selected,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _buildVersionHistoryCard(
-                          context,
-                          selected: selected,
-                        ),
-                      ),
-                    ],
-                  );
-                },
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: _buildChangesCard(context)),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildVerificationCard(
+                              context,
+                              selected: selected,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: _buildVersionHistoryCard(
+                              context,
+                              selected: selected,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildEnhancedContentCard(BuildContext context, ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 280),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFD8DBD7)),
+      ),
+      child: SelectableText(
+        _snapshot.enhancedContent,
+        style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
       ),
     );
   }
@@ -1468,6 +1480,36 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     _enhancementDebounce = Timer(
       const Duration(milliseconds: 450),
       _refreshEnhancement,
+    );
+  }
+
+  void _handleRawEditorChanged(String value) {
+    if (_isApplyingAuthoringExpansion) {
+      _isApplyingAuthoringExpansion = false;
+      _queueEnhancement(value);
+      return;
+    }
+
+    final selected = _selectedNote;
+    if (selected == null) {
+      return;
+    }
+
+    final expansion = _authoringDirectiveService.expandTrailingShortcut(
+      previousText: selected.rawContent,
+      nextText: value,
+      selectionOffset: _controller.selection.extentOffset,
+    );
+    if (expansion == null) {
+      _queueEnhancement(value);
+      return;
+    }
+
+    _isApplyingAuthoringExpansion = true;
+    _controller.value = _controller.value.copyWith(
+      text: expansion.text,
+      selection: TextSelection.collapsed(offset: expansion.selectionOffset),
+      composing: TextRange.empty,
     );
   }
 
