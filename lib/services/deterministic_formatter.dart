@@ -90,6 +90,8 @@ class DeterministicFormatter {
 
     final trimmed = content.trim();
     switch (line.kind) {
+      case LineKind.directive:
+        return content;
       case LineKind.heading:
         final level = line.headingLevel ?? 1;
         final title = trimmed.replaceFirst(RegExp(r'^#{1,6}\s*'), '').trim();

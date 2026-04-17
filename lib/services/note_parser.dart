@@ -3,6 +3,9 @@ import '../models/notebook_models.dart';
 class NoteParser {
   const NoteParser();
 
+  static const _mathDirectiveStart = '/math';
+  static const _directiveEnd = '/end';
+
   static final RegExp _headingPattern = RegExp(r'^#{1,6}\s+');
   static final RegExp _checkboxPattern = RegExp(r'^-\s\[( |x|X)\]\s+');
   static final RegExp _bulletPattern = RegExp(r'^[-*•]\s+');
@@ -33,17 +36,24 @@ class NoteParser {
 
     var inCodeFence = false;
     var inBlockMath = false;
+    var inDirectiveMath = false;
     String? blockMathCloser;
 
     for (var index = 0; index < sourceLines.length; index++) {
       final line = sourceLines[index];
       final trimmed = line.trim();
+      final isMathDirectiveStart = trimmed == _mathDirectiveStart;
+      final isDirectiveEnd = trimmed == _directiveEnd;
+      final isMathDirectiveBoundary =
+          isMathDirectiveStart || (isDirectiveEnd && inDirectiveMath);
       final lineProtectedSpans = _detectProtectedSpans(
         line: line,
         trimmed: trimmed,
         lineIndex: index,
         inCodeFence: inCodeFence,
         inBlockMath: inBlockMath,
+        inDirectiveMath: inDirectiveMath,
+        isMathDirectiveBoundary: isMathDirectiveBoundary,
       );
       final kind = _classifyLine(
         trimmed,
@@ -67,6 +77,12 @@ class NoteParser {
                 _matchesBlockMathEnd(trimmed, blockMathCloser))) {
           inBlockMath = false;
           blockMathCloser = null;
+        }
+
+        if (isMathDirectiveStart) {
+          inDirectiveMath = true;
+        } else if (isDirectiveEnd && inDirectiveMath) {
+          inDirectiveMath = false;
         }
       }
 
@@ -129,6 +145,9 @@ class NoteParser {
     if (inCodeFence || trimmed.startsWith('```')) {
       return LineKind.code;
     }
+    if (trimmed == _mathDirectiveStart || trimmed == _directiveEnd) {
+      return LineKind.directive;
+    }
     if (_headingPattern.hasMatch(trimmed)) {
       return LineKind.heading;
     }
@@ -162,6 +181,8 @@ class NoteParser {
     required int lineIndex,
     required bool inCodeFence,
     required bool inBlockMath,
+    required bool inDirectiveMath,
+    required bool isMathDirectiveBoundary,
   }) {
     if (trimmed.isEmpty) {
       return const [];
@@ -185,6 +206,16 @@ class NoteParser {
           protectionMode: inBlockMath
               ? ProtectionMode.layoutLocked
               : ProtectionMode.exactLocked,
+        ),
+      ];
+    }
+    if (inDirectiveMath || isMathDirectiveBoundary) {
+      return [
+        _fullLineSpan(
+          line: line,
+          lineIndex: lineIndex,
+          kind: SpanKind.blockMathTex,
+          protectionMode: ProtectionMode.exactLocked,
         ),
       ];
     }
@@ -429,6 +460,8 @@ class NoteParser {
 
   bool _canContinueBlock(BlockKind blockKind, LineKind lineKind) {
     switch (blockKind) {
+      case BlockKind.math:
+        return lineKind == LineKind.directive || lineKind == LineKind.unknown;
       case BlockKind.paragraph:
         return lineKind == LineKind.paragraph;
       case BlockKind.keyValueGroup:
@@ -455,11 +488,12 @@ class NoteParser {
           span.kind == SpanKind.blockMathTex ||
           span.kind == SpanKind.equationRun,
     )) {
-      return BlockKind.mixed;
+      return BlockKind.math;
     }
 
     return switch (line.kind) {
       LineKind.blank => BlockKind.blank,
+      LineKind.directive => BlockKind.math,
       LineKind.paragraph => BlockKind.paragraph,
       LineKind.bullet => BlockKind.bulletList,
       LineKind.orderedItem => BlockKind.orderedList,

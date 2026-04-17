@@ -66,6 +66,32 @@ meeting notes
     expect(expansion, isNull);
   });
 
+  test('parser groups /math directives into a protected math block', () {
+    final structure = parser.parse(r'''
+proof notes
+/math
+\begin{align}
+E[X] &= \sum_i x_i p_i \\
+Var(X) &= E[X^2] - (E[X])^2
+\end{align}
+/end
+
+- check assumptions
+''');
+
+    final mathBlock = structure.blocks.firstWhere(
+      (block) => block.kind == BlockKind.math,
+    );
+
+    expect(mathBlock.lines.first.trimmed, '/math');
+    expect(mathBlock.lines.last.trimmed, '/end');
+    expect(
+      mathBlock.lines.where((line) => line.hasProtectedContent).length,
+      mathBlock.lines.length,
+    );
+    expect(structure.metrics.mathLineCount, greaterThanOrEqualTo(4));
+  });
+
   test('acceptance gate rejects structure-breaking formatter drafts', () {
     final champion = formatter.buildChampionDraft(
       parser.parse('''

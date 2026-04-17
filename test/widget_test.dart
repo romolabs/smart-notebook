@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_notebook/app.dart';
 import 'package:smart_notebook/data/seed_notes.dart';
@@ -52,6 +53,73 @@ void main() {
     final textField = tester.widget<TextField>(editor);
     expect(textField.controller?.text, 'σ ');
     expect(find.textContaining('σ'), findsWidgets);
+  });
+
+  testWidgets('enhanced pane renders /math blocks as math widgets', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final file = File(
+      '${Directory.systemTemp.path}/smart_notebook_widget_math_block_test.db',
+    );
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    addTearDown(() {
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    });
+
+    final now = DateTime.now();
+    final note = NotebookNote(
+      id: 'math-note',
+      title: 'Math note',
+      category: 'Study',
+      createdAt: now,
+      updatedAt: now,
+      rawContent: r'''
+proof notes
+/math
+\begin{align}
+E[X] &= \sum_i x_i p_i \\
+Var(X) &= E[X^2] - (E[X])^2
+\end{align}
+/end
+
+- check assumptions
+''',
+      versions: const [],
+    );
+
+    final repository = NotebookRepository.forTesting(
+      databasePath: file.path,
+      engine: const MockEnhancementEngine(),
+    );
+    addTearDown(repository.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookWorkspace(
+          engine: const MockEnhancementEngine(),
+          repository: repository,
+          settings: AppSettings.defaults,
+          onSaveSettings: (_) async {},
+          initialNotes: [note],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Math), findsWidgets);
+    expect(find.text('/math'), findsNothing);
+    expect(find.text('/end'), findsNothing);
+    expect(find.textContaining('check assumptions'), findsOneWidget);
   });
 
   testWidgets(

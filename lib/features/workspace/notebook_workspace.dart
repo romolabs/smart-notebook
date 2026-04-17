@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../../models/notebook_models.dart';
 import '../../services/authoring_directive_service.dart';
 import '../../services/mock_enhancement_engine.dart';
+import '../../services/note_parser.dart';
 import '../../services/notebook_repository.dart';
 
 enum EditorFontFamily { modern, editorial, mono }
@@ -66,6 +68,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   final _searchController = TextEditingController();
   final _notesRailScrollController = ScrollController();
   static const _authoringDirectiveService = AuthoringDirectiveService();
+  static const _contentParser = NoteParser();
 
   List<NotebookNote> _notes = const [];
   NotebookNote? _selectedNote;
@@ -791,6 +794,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   }
 
   Widget _buildEnhancedContentCard(BuildContext context, ThemeData theme) {
+    final structure = _contentParser.parse(_snapshot.enhancedContent);
+    final hasMathBlocks = structure.blocks.any(
+      (block) => block.kind == BlockKind.math,
+    );
+
     return Container(
       width: double.infinity,
       constraints: const BoxConstraints(minHeight: 280),
@@ -800,11 +808,89 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: const Color(0xFFD8DBD7)),
       ),
-      child: SelectableText(
-        _snapshot.enhancedContent,
-        style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+      child: hasMathBlocks
+          ? _buildEnhancedStructuredContent(context, theme, structure)
+          : SelectableText(
+              _snapshot.enhancedContent,
+              style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+            ),
+    );
+  }
+
+  Widget _buildEnhancedStructuredContent(
+    BuildContext context,
+    ThemeData theme,
+    NoteStructure structure,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < structure.blocks.length; index++) ...[
+          _buildEnhancedBlock(context, theme, structure.blocks[index]),
+          if (index != structure.blocks.length - 1) const SizedBox(height: 18),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildEnhancedBlock(
+    BuildContext context,
+    ThemeData theme,
+    BlockNode block,
+  ) {
+    if (block.kind == BlockKind.math) {
+      return _buildEnhancedMathBlock(context, theme, block);
+    }
+
+    final text = block.lines
+        .map((line) => line.sourceLine.trimRight())
+        .join('\n')
+        .trimRight();
+    return SelectableText(
+      text,
+      style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+    );
+  }
+
+  Widget _buildEnhancedMathBlock(
+    BuildContext context,
+    ThemeData theme,
+    BlockNode block,
+  ) {
+    final expression = block.lines
+        .where((line) => !_isMathDirectiveLine(line))
+        .map((line) => line.sourceLine.trimRight())
+        .where((line) => line.isNotEmpty)
+        .join('\n')
+        .trim();
+
+    if (expression.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F4EC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE1D7C6)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Math.tex(
+          expression,
+          mathStyle: MathStyle.display,
+          textStyle: theme.textTheme.bodyLarge?.copyWith(fontSize: 22),
+        ),
       ),
     );
+  }
+
+  bool _isMathDirectiveLine(LineNode line) {
+    final trimmed = line.trimmed;
+    return line.kind == LineKind.directive &&
+        (trimmed == '/math' || trimmed == '/end');
   }
 
   Widget _buildEnhancedArtifactsSection(BuildContext context) {

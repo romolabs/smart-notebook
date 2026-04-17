@@ -12,6 +12,7 @@ enum ProcessorState { completed, skipped, unavailable, failed }
 
 enum LineKind {
   blank,
+  directive,
   paragraph,
   bullet,
   orderedItem,
@@ -26,6 +27,7 @@ enum LineKind {
 
 enum BlockKind {
   blank,
+  math,
   paragraph,
   bulletList,
   orderedList,
