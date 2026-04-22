@@ -44,6 +44,22 @@ class EditorAppearance {
   }
 }
 
+class _NotebookRailGroup {
+  const _NotebookRailGroup({required this.label, required this.notes});
+
+  final String label;
+  final List<NotebookNote> notes;
+}
+
+class _MoveNoteResult {
+  const _MoveNoteResult({required this.workspace, required this.notebook});
+
+  final String workspace;
+  final String notebook;
+}
+
+enum _NoteAction { rename, move, delete }
+
 class NotebookWorkspace extends StatefulWidget {
   const NotebookWorkspace({
     super.key,
@@ -65,6 +81,10 @@ class NotebookWorkspace extends StatefulWidget {
 }
 
 class _NotebookWorkspaceState extends State<NotebookWorkspace> {
+  static const _allWorkspacesLabel = 'All workspaces';
+  static const _allNotebooksLabel = 'All notebooks';
+  static const _defaultWorkspace = 'Personal';
+  static const _defaultNotebook = 'Inbox';
   final _controller = TextEditingController();
   final _searchController = TextEditingController();
   final _notesRailScrollController = ScrollController();
@@ -107,6 +127,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   bool _isProcessing = false;
   String? _loadError;
   String _searchQuery = '';
+  String _selectedWorkspaceFilter = _allWorkspacesLabel;
+  String _selectedNotebookFilter = _allNotebooksLabel;
   int _enhancementRevision = 0;
   int _aiCommandRevision = 0;
   Map<String, AiCommandResult> _aiCommandResults = const {};
@@ -313,6 +335,42 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       icon: const Icon(Icons.auto_awesome_outlined),
       label: Text(_visibleAiCommandResults.isEmpty ? 'AI Guide' : 'AI Drawer'),
     );
+    final noteActionsButton = PopupMenuButton<_NoteAction>(
+      key: const ValueKey('selected-note-actions-button'),
+      tooltip: 'Note actions',
+      onSelected: (action) => _handleNoteActionForSelected(action),
+      itemBuilder: (context) => const [
+        PopupMenuItem(
+          value: _NoteAction.rename,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.drive_file_rename_outline),
+            title: Text('Rename note'),
+          ),
+        ),
+        PopupMenuItem(
+          value: _NoteAction.move,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.folder_open_outlined),
+            title: Text('Move note'),
+          ),
+        ),
+        PopupMenuDivider(),
+        PopupMenuItem(
+          value: _NoteAction.delete,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.delete_outline),
+            title: Text('Delete note'),
+          ),
+        ),
+      ],
+      child: const Padding(
+        padding: EdgeInsets.all(8),
+        child: Icon(Icons.more_horiz),
+      ),
+    );
 
     if (compact) {
       return Column(
@@ -329,6 +387,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                 aiDrawerButton,
                 const SizedBox(width: 12),
                 settingsButton,
+                const SizedBox(width: 4),
+                noteActionsButton,
               ],
             ),
           ),
@@ -345,6 +405,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         aiDrawerButton,
         const SizedBox(width: 12),
         settingsButton,
+        const SizedBox(width: 4),
+        noteActionsButton,
       ],
     );
   }
@@ -355,6 +417,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     required NotebookNote selected,
   }) {
     final theme = Theme.of(context);
+    final filteredNotes = _filteredNotes;
+    final railGroups = _filteredRailGroups;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.78),
@@ -370,7 +434,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
               children: [
                 Expanded(
                   child: Text(
-                    'Notebook',
+                    'Library',
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -415,95 +479,89 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            _buildScopeChips(
+              label: 'Workspace',
+              options: _workspaceFilters,
+              selectedValue: _selectedWorkspaceFilter,
+              onSelected: _setWorkspaceFilter,
+            ),
+            const SizedBox(height: 10),
+            _buildScopeChips(
+              label: 'Notebook',
+              options: _notebookFilters,
+              selectedValue: _selectedNotebookFilter,
+              onSelected: _setNotebookFilter,
+            ),
             const SizedBox(height: 18),
             Expanded(
-              child: _filteredNotes.isEmpty
+              child: filteredNotes.isEmpty
                   ? _buildEmptySearchState(theme.textTheme)
                   : Scrollbar(
                       controller: _notesRailScrollController,
                       thumbVisibility: !compact,
-                      child: ListView.separated(
-                        key: PageStorageKey<String>(
-                          'notes-rail-${compact ? 'compact' : 'desktop'}',
-                        ),
-                        controller: _notesRailScrollController,
-                        primary: false,
-                        scrollDirection: compact
-                            ? Axis.horizontal
-                            : Axis.vertical,
-                        itemCount: _filteredNotes.length,
-                        separatorBuilder: (_, _) => SizedBox(
-                          width: compact ? 10 : 0,
-                          height: compact ? 0 : 10,
-                        ),
-                        itemBuilder: (context, index) {
-                          final note = _filteredNotes[index];
-                          final isSelected = note.id == selected.id;
-                          return SizedBox(
-                            width: compact ? 220 : null,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(18),
-                              onTap: () => _selectNote(note),
-                              child: Ink(
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? const Color(0xFF153D44)
-                                      : const Color(0xFFF6F6F1),
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(
-                                    color: isSelected
-                                        ? const Color(0xFF153D44)
-                                        : const Color(0xFFE2E4DE),
+                      child: compact
+                          ? ListView.separated(
+                              key: const PageStorageKey<String>(
+                                'notes-rail-compact',
+                              ),
+                              controller: _notesRailScrollController,
+                              primary: false,
+                              scrollDirection: Axis.horizontal,
+                              itemCount: filteredNotes.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(width: 10),
+                              itemBuilder: (context, index) {
+                                final note = filteredNotes[index];
+                                return SizedBox(
+                                  width: 220,
+                                  child: _buildNoteRailCard(
+                                    context,
+                                    note: note,
+                                    selected: selected.id == note.id,
                                   ),
-                                ),
-                                child: Column(
+                                );
+                              },
+                            )
+                          : ListView.separated(
+                              key: const PageStorageKey<String>(
+                                'notes-rail-desktop',
+                              ),
+                              controller: _notesRailScrollController,
+                              primary: false,
+                              itemCount: railGroups.length,
+                              separatorBuilder: (_, _) =>
+                                  const SizedBox(height: 16),
+                              itemBuilder: (context, index) {
+                                final group = railGroups[index];
+                                return Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      note.category,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.labelMedium
+                                      group.label,
+                                      style: theme.textTheme.labelLarge
                                           ?.copyWith(
-                                            color: isSelected
-                                                ? Colors.white70
-                                                : const Color(0xFF5B605F),
+                                            fontWeight: FontWeight.w700,
+                                            color: const Color(0xFF46504D),
                                           ),
                                     ),
                                     const SizedBox(height: 8),
-                                    Text(
-                                      note.title,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w600,
-                                            color: isSelected
-                                                ? Colors.white
-                                                : null,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      _relativeDate(note.updatedAt),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.bodySmall
-                                          ?.copyWith(
-                                            color: isSelected
-                                                ? Colors.white70
-                                                : const Color(0xFF7B817F),
-                                          ),
+                                    ...group.notes.map(
+                                      (note) => Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 10,
+                                        ),
+                                        child: _buildNoteRailCard(
+                                          context,
+                                          note: note,
+                                          selected: selected.id == note.id,
+                                        ),
+                                      ),
                                     ),
                                   ],
-                                ),
-                              ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                      ),
                     ),
             ),
           ],
@@ -568,76 +626,101 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       context,
       title: 'Raw',
       subtitle: 'Fast capture. No silent rewrites.',
-      child: Column(
-        children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _processorChip(
-                label: 'Spelling',
-                value: _toggles.spelling,
-                onChanged: (value) =>
-                    _updateToggles(_toggles.copyWith(spelling: value)),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tightHeight = constraints.maxHeight < 400;
+          final editor = TextField(
+            focusNode: _editorFocusNode,
+            controller: _controller,
+            onChanged: _handleRawEditorChanged,
+            expands: !tightHeight,
+            minLines: tightHeight ? 10 : null,
+            maxLines: tightHeight ? null : null,
+            style: _editorTextStyle(theme),
+            decoration: InputDecoration(
+              hintText:
+                  'Capture rough thoughts, meeting notes, research scraps...',
+              filled: true,
+              fillColor: const Color(0xFFFFFCF6),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(22),
+                borderSide: const BorderSide(color: Color(0xFFDBDFD8)),
               ),
-              _processorChip(
-                label: 'Formatting',
-                value: _toggles.formatting,
-                onChanged: (value) =>
-                    _updateToggles(_toggles.copyWith(formatting: value)),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(22),
+                borderSide: const BorderSide(color: Color(0xFFDBDFD8)),
               ),
-              _processorChip(
-                label: 'Clarity',
-                value: _toggles.clarity,
-                onChanged: (value) =>
-                    _updateToggles(_toggles.copyWith(clarity: value)),
-              ),
-              _processorChip(
-                label: 'Verification',
-                value: _toggles.verification,
-                onChanged: (value) =>
-                    _updateToggles(_toggles.copyWith(verification: value)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildWriterToolbar(context),
-          const SizedBox(height: 16),
-          Expanded(
-            child: TextField(
-              focusNode: _editorFocusNode,
-              controller: _controller,
-              onChanged: _handleRawEditorChanged,
-              expands: true,
-              minLines: null,
-              maxLines: null,
-              style: _editorTextStyle(theme),
-              decoration: InputDecoration(
-                hintText:
-                    'Capture rough thoughts, meeting notes, research scraps...',
-                filled: true,
-                fillColor: const Color(0xFFFFFCF6),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22),
-                  borderSide: const BorderSide(color: Color(0xFFDBDFD8)),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(22),
+                borderSide: const BorderSide(
+                  color: Color(0xFF167C80),
+                  width: 1.5,
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22),
-                  borderSide: const BorderSide(color: Color(0xFFDBDFD8)),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF167C80),
-                    width: 1.5,
-                  ),
-                ),
-                contentPadding: const EdgeInsets.all(18),
               ),
+              contentPadding: const EdgeInsets.all(18),
             ),
-          ),
-        ],
+          );
+
+          if (tightHeight) {
+            return SingleChildScrollView(
+              child: Column(
+                children: [
+                  _buildRawPaneControls(),
+                  const SizedBox(height: 16),
+                  SizedBox(height: 260, child: editor),
+                ],
+              ),
+            );
+          }
+
+          return Column(
+            children: [
+              _buildRawPaneControls(),
+              const SizedBox(height: 16),
+              Expanded(child: editor),
+            ],
+          );
+        },
       ),
+    );
+  }
+
+  Widget _buildRawPaneControls() {
+    return Column(
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            _processorChip(
+              label: 'Spelling',
+              value: _toggles.spelling,
+              onChanged: (value) =>
+                  _updateToggles(_toggles.copyWith(spelling: value)),
+            ),
+            _processorChip(
+              label: 'Formatting',
+              value: _toggles.formatting,
+              onChanged: (value) =>
+                  _updateToggles(_toggles.copyWith(formatting: value)),
+            ),
+            _processorChip(
+              label: 'Clarity',
+              value: _toggles.clarity,
+              onChanged: (value) =>
+                  _updateToggles(_toggles.copyWith(clarity: value)),
+            ),
+            _processorChip(
+              label: 'Verification',
+              value: _toggles.verification,
+              onChanged: (value) =>
+                  _updateToggles(_toggles.copyWith(verification: value)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _buildWriterToolbar(context),
+      ],
     );
   }
 
@@ -1308,9 +1391,28 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                 color: const Color(0xFF51606A),
               ),
             );
-            final actionButton = TextButton(
-              onPressed: () => _openAiDrawer(result.request.id),
-              child: const Text('Open AI Drawer'),
+            final actionButtons = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: [
+                if (_canApplyAiResult(result))
+                  TextButton(
+                    key: ValueKey('insert-ai-result-${result.request.id}'),
+                    onPressed: () => _insertAiResultAtCursor(result),
+                    child: const Text('Insert'),
+                  ),
+                if (_canApplyAiResult(result))
+                  TextButton(
+                    key: ValueKey('append-ai-result-${result.request.id}'),
+                    onPressed: () => _appendAiResultBelow(result),
+                    child: const Text('Append below'),
+                  ),
+                TextButton(
+                  onPressed: () => _openAiDrawer(result.request.id),
+                  child: const Text('Open AI Drawer'),
+                ),
+              ],
             );
 
             if (stacked) {
@@ -1318,12 +1420,12 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   providerText,
-                  Align(alignment: Alignment.centerRight, child: actionButton),
+                  Align(alignment: Alignment.centerRight, child: actionButtons),
                 ],
               );
             }
 
-            return Row(children: [providerText, const Spacer(), actionButton]);
+            return Row(children: [providerText, const Spacer(), actionButtons]);
           },
         ),
       ],
@@ -1733,9 +1835,134 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Try another title or category keyword.',
+              'Try another title, workspace, notebook, or category keyword.',
               textAlign: TextAlign.center,
               style: theme.bodyMedium?.copyWith(color: const Color(0xFF5B605F)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScopeChips({
+    required String label,
+    required List<String> options,
+    required String selectedValue,
+    required ValueChanged<String> onSelected,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: const Color(0xFF5B605F),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: options
+                .map(
+                  (option) => Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: selectedValue == option,
+                      onSelected: (_) => onSelected(option),
+                      selectedColor: const Color(0xFFD4EBE7),
+                      checkmarkColor: const Color(0xFF114A47),
+                      label: Text(option),
+                      labelStyle: TextStyle(
+                        color: selectedValue == option
+                            ? const Color(0xFF114A47)
+                            : const Color(0xFF5B605F),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNoteRailCard(
+    BuildContext context, {
+    required NotebookNote note,
+    required bool selected,
+  }) {
+    final theme = Theme.of(context);
+    final actionsButton = PopupMenuButton<_NoteAction>(
+      key: ValueKey('note-actions-${note.id}'),
+      tooltip: 'Note actions',
+      onSelected: (action) => _handleNoteAction(action, note),
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: _NoteAction.rename, child: Text('Rename')),
+        PopupMenuItem(value: _NoteAction.move, child: Text('Move')),
+        PopupMenuDivider(),
+        PopupMenuItem(value: _NoteAction.delete, child: Text('Delete')),
+      ],
+      icon: Icon(
+        Icons.more_horiz,
+        color: selected ? Colors.white70 : const Color(0xFF5B605F),
+      ),
+    );
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => _selectNote(note),
+      child: Ink(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF153D44) : const Color(0xFFF6F6F1),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? const Color(0xFF153D44) : const Color(0xFFE2E4DE),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _noteScopeLabel(note),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: selected
+                          ? Colors.white70
+                          : const Color(0xFF5B605F),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                actionsButton,
+              ],
+            ),
+            Text(
+              note.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : null,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${note.category} • ${_relativeDate(note.updatedAt)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: selected ? Colors.white70 : const Color(0xFF7B817F),
+              ),
             ),
           ],
         ),
@@ -2072,13 +2299,308 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     _persistCurrentVersion();
   }
 
+  void _setWorkspaceFilter(String workspace) {
+    setState(() {
+      _selectedWorkspaceFilter = workspace;
+      if (workspace == _allWorkspacesLabel) {
+        _selectedNotebookFilter = _allNotebooksLabel;
+      } else if (_selectedNotebookFilter != _allNotebooksLabel &&
+          !_notes.any(
+            (note) =>
+                note.workspace == workspace &&
+                note.notebook == _selectedNotebookFilter,
+          )) {
+        _selectedNotebookFilter = _allNotebooksLabel;
+      }
+    });
+    _syncSelectionToVisibleNotes();
+  }
+
+  void _setNotebookFilter(String notebook) {
+    setState(() {
+      _selectedNotebookFilter = notebook;
+    });
+    _syncSelectionToVisibleNotes();
+  }
+
+  void _cancelPendingNoteWork() {
+    _persistDebounce?.cancel();
+    _enhancementDebounce?.cancel();
+  }
+
+  Future<void> _handleNoteActionForSelected(_NoteAction action) async {
+    final selected = _selectedNote;
+    if (selected == null) {
+      return;
+    }
+    await _handleNoteAction(action, selected);
+  }
+
+  Future<void> _handleNoteAction(_NoteAction action, NotebookNote note) async {
+    switch (action) {
+      case _NoteAction.rename:
+        await _renameNote(note);
+      case _NoteAction.move:
+        await _moveNote(note);
+      case _NoteAction.delete:
+        await _deleteNote(note);
+    }
+  }
+
+  Future<void> _renameNote(NotebookNote note) async {
+    _cancelPendingNoteWork();
+    final controller = TextEditingController(text: note.title);
+    final updatedTitle = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Rename note'),
+          content: TextField(
+            key: const ValueKey('rename-note-field'),
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Note title',
+              hintText: 'Lecture 04 - Limits',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final normalizedTitle = updatedTitle?.trim();
+    if (normalizedTitle == null || normalizedTitle.isEmpty) {
+      return;
+    }
+
+    final renamed = note.copyWith(
+      title: normalizedTitle,
+      updatedAt: DateTime.now(),
+    );
+    await _commitNoteUpdate(renamed);
+  }
+
+  Future<void> _moveNote(NotebookNote note) async {
+    _cancelPendingNoteWork();
+    final workspaceController = TextEditingController(text: note.workspace);
+    final notebookController = TextEditingController(text: note.notebook);
+    final moveResult = await showDialog<_MoveNoteResult>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Move note'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  key: const ValueKey('move-note-workspace-field'),
+                  controller: workspaceController,
+                  autofocus: true,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Workspace',
+                    hintText: 'School',
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  key: const ValueKey('move-note-notebook-field'),
+                  controller: notebookController,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: 'Notebook',
+                    hintText: 'General Study',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  _MoveNoteResult(
+                    workspace: workspaceController.text.trim(),
+                    notebook: notebookController.text.trim(),
+                  ),
+                );
+              },
+              child: const Text('Move'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (moveResult == null ||
+        moveResult.workspace.isEmpty ||
+        moveResult.notebook.isEmpty) {
+      return;
+    }
+
+    final moved = note.copyWith(
+      workspace: moveResult.workspace,
+      notebook: moveResult.notebook,
+      updatedAt: DateTime.now(),
+    );
+
+    setState(() {
+      _selectedWorkspaceFilter = moveResult.workspace;
+      _selectedNotebookFilter = moveResult.notebook;
+    });
+    await _commitNoteUpdate(moved);
+  }
+
+  Future<void> _deleteNote(NotebookNote selected) async {
+    _cancelPendingNoteWork();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete note'),
+          content: Text(
+            'Delete "${selected.title}"? Its saved snapshots will be removed too.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF8A2424),
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    final remaining = _notes
+        .where((note) => note.id != selected.id)
+        .toList(growable: false);
+    final nextSelected = remaining.firstWhere(
+      (note) => _isVisibleInCurrentScope(note),
+      orElse: () => remaining.firstOrNull ?? _buildEmptyNote(),
+    );
+    final nextNotes = remaining.isEmpty ? [nextSelected] : remaining;
+
+    setState(() {
+      if (!nextNotes.any((note) => _isVisibleInCurrentScope(note))) {
+        _selectedWorkspaceFilter = _allWorkspacesLabel;
+        _selectedNotebookFilter = _allNotebooksLabel;
+      }
+      _notes = nextNotes;
+      _selectedNote = nextSelected;
+      _controller.text = nextSelected.rawContent;
+      _aiCommandResults = const {};
+      _activeAiCommandId = null;
+    });
+    await widget.repository.saveNotes(_notes);
+    unawaited(_refreshNoteProcessing(nextSelected.rawContent));
+  }
+
+  bool _isVisibleInCurrentScope(NotebookNote note) {
+    final workspaceVisible =
+        _selectedWorkspaceFilter == _allWorkspacesLabel ||
+        note.workspace == _selectedWorkspaceFilter;
+    final notebookVisible =
+        _selectedNotebookFilter == _allNotebooksLabel ||
+        note.notebook == _selectedNotebookFilter;
+    return workspaceVisible && notebookVisible;
+  }
+
+  Future<void> _commitNoteUpdate(NotebookNote updated) async {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedNote = updated;
+      _notes = _replaceNote(updated);
+    });
+    _syncSelectionToVisibleNotes();
+    await widget.repository.saveNotes(_notes);
+  }
+
+  NotebookNote _buildEmptyNote() {
+    final now = DateTime.now();
+    return NotebookNote(
+      id: 'note-${now.microsecondsSinceEpoch}',
+      title: 'Untitled note 1',
+      workspace: _defaultWorkspace,
+      notebook: _defaultNotebook,
+      category: 'General',
+      createdAt: now,
+      updatedAt: now,
+      rawContent: '',
+      versions: const [],
+    );
+  }
+
+  void _syncSelectionToVisibleNotes() {
+    final selected = _selectedNote;
+    if (selected == null) {
+      return;
+    }
+
+    if (_filteredNotes.any((note) => note.id == selected.id)) {
+      return;
+    }
+
+    final fallback = _filteredNotes.firstOrNull;
+    if (fallback == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedNote = fallback;
+      _controller.text = fallback.rawContent;
+      _aiCommandResults = const {};
+      _activeAiCommandId = null;
+    });
+    unawaited(_refreshNoteProcessing(fallback.rawContent));
+  }
+
   Future<void> _createNewNote() async {
     final now = DateTime.now();
     final title = 'Untitled note ${_notes.length + 1}';
+    final workspace = _selectedWorkspaceFilter == _allWorkspacesLabel
+        ? (_selectedNote?.workspace ?? _defaultWorkspace)
+        : _selectedWorkspaceFilter;
+    final notebook = _selectedNotebookFilter == _allNotebooksLabel
+        ? (_selectedNote?.notebook ?? _defaultNotebook)
+        : _selectedNotebookFilter;
     final newNote = NotebookNote(
       id: 'note-${now.microsecondsSinceEpoch}',
       title: title,
-      category: 'General',
+      workspace: workspace,
+      notebook: notebook,
+      category: _selectedNote?.category ?? 'General',
       createdAt: now,
       updatedAt: now,
       rawContent: '',
@@ -2086,6 +2608,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     );
 
     setState(() {
+      _selectedWorkspaceFilter = workspace;
+      _selectedNotebookFilter = notebook;
       _notes = [newNote, ..._notes];
       _selectedNote = newNote;
       _controller.clear();
@@ -2153,21 +2677,74 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         .toList(growable: false);
   }
 
-  List<NotebookNote> get _filteredNotes {
-    if (_searchQuery.isEmpty) {
-      return _notes;
-    }
+  List<String> get _workspaceFilters {
+    final workspaces =
+        _notes.map((note) => note.workspace).toSet().toList(growable: false)
+          ..sort();
+    return [_allWorkspacesLabel, ...workspaces];
+  }
 
+  List<String> get _notebookFilters {
+    if (_selectedWorkspaceFilter == _allWorkspacesLabel) {
+      return const [_allNotebooksLabel];
+    }
+    final notebooks =
+        _notes
+            .where((note) => note.workspace == _selectedWorkspaceFilter)
+            .map((note) => note.notebook)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    return [_allNotebooksLabel, ...notebooks];
+  }
+
+  List<NotebookNote> get _filteredNotes {
     return _notes
         .where((note) {
+          if (_selectedWorkspaceFilter != _allWorkspacesLabel &&
+              note.workspace != _selectedWorkspaceFilter) {
+            return false;
+          }
+          if (_selectedNotebookFilter != _allNotebooksLabel &&
+              note.notebook != _selectedNotebookFilter) {
+            return false;
+          }
+          if (_searchQuery.isEmpty) {
+            return true;
+          }
           final haystack = [
             note.title,
+            note.workspace,
+            note.notebook,
             note.category,
             note.rawContent,
           ].join(' ').toLowerCase();
           return haystack.contains(_searchQuery);
         })
         .toList(growable: false);
+  }
+
+  List<_NotebookRailGroup> get _filteredRailGroups {
+    final grouped = <String, List<NotebookNote>>{};
+    for (final note in _filteredNotes) {
+      final label = _selectedWorkspaceFilter == _allWorkspacesLabel
+          ? '${note.workspace} / ${note.notebook}'
+          : note.notebook;
+      grouped.putIfAbsent(label, () => []).add(note);
+    }
+
+    return grouped.entries
+        .map(
+          (entry) => _NotebookRailGroup(label: entry.key, notes: entry.value),
+        )
+        .toList(growable: false);
+  }
+
+  String _noteScopeLabel(NotebookNote note) {
+    if (_selectedWorkspaceFilter == _allWorkspacesLabel) {
+      return '${note.workspace} / ${note.notebook}';
+    }
+    return note.notebook;
   }
 
   IconData _iconForChange(ChangeType type) {
@@ -2299,13 +2876,7 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     );
     final caretOffset = insertionPoint + snippet.length;
 
-    _controller.value = _controller.value.copyWith(
-      text: updatedText,
-      selection: TextSelection.collapsed(offset: caretOffset),
-      composing: TextRange.empty,
-    );
-    _editorFocusNode.requestFocus();
-    _queueEnhancement(updatedText);
+    _applyRawEditorUpdate(updatedText, caretOffset: caretOffset);
   }
 
   void _insertMathBlock() {
@@ -2353,6 +2924,51 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     final start = selection.isValid ? selection.start : originalText.length;
     final end = selection.isValid ? selection.end : originalText.length;
     return builder(originalText, start, end);
+  }
+
+  bool _canApplyAiResult(AiCommandResult result) {
+    return result.status == AiCommandStatus.completed &&
+        result.content.trim().isNotEmpty;
+  }
+
+  void _insertAiResultAtCursor(AiCommandResult result) {
+    final insertion = _formattedAiResult(result);
+    if (insertion.isEmpty) {
+      return;
+    }
+    _insertSnippet(insertion);
+  }
+
+  void _appendAiResultBelow(AiCommandResult result) {
+    final insertion = _formattedAiResult(result);
+    if (insertion.isEmpty) {
+      return;
+    }
+
+    final originalText = _controller.text;
+    final separator = originalText.trim().isEmpty
+        ? ''
+        : (originalText.endsWith('\n\n') ? '' : '\n\n');
+    final updatedText = '$originalText$separator$insertion';
+    _applyRawEditorUpdate(updatedText, caretOffset: updatedText.length);
+  }
+
+  String _formattedAiResult(AiCommandResult result) {
+    final content = result.content.trim();
+    if (content.isEmpty) {
+      return '';
+    }
+    return '${result.title}\n$content';
+  }
+
+  void _applyRawEditorUpdate(String updatedText, {required int caretOffset}) {
+    _controller.value = _controller.value.copyWith(
+      text: updatedText,
+      selection: TextSelection.collapsed(offset: caretOffset),
+      composing: TextRange.empty,
+    );
+    _editorFocusNode.requestFocus();
+    _queueEnhancement(updatedText);
   }
 
   Future<void> _runEnhancement(String rawContent) async {
@@ -2540,6 +3156,23 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                 result.content.trim().isEmpty ? result.detail : result.content,
                 style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
               ),
+              if (_canApplyAiResult(result)) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => _insertAiResultAtCursor(result),
+                      child: const Text('Insert at cursor'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () => _appendAiResultBelow(result),
+                      child: const Text('Append below'),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         );

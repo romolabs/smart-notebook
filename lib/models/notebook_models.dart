@@ -200,6 +200,8 @@ class NotebookNote {
   const NotebookNote({
     required this.id,
     required this.title,
+    required this.workspace,
+    required this.notebook,
     required this.category,
     required this.createdAt,
     required this.updatedAt,
@@ -209,6 +211,8 @@ class NotebookNote {
 
   final String id;
   final String title;
+  final String workspace;
+  final String notebook;
   final String category;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -218,6 +222,8 @@ class NotebookNote {
   NotebookNote copyWith({
     String? id,
     String? title,
+    String? workspace,
+    String? notebook,
     String? category,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -227,6 +233,8 @@ class NotebookNote {
     return NotebookNote(
       id: id ?? this.id,
       title: title ?? this.title,
+      workspace: workspace ?? this.workspace,
+      notebook: notebook ?? this.notebook,
       category: category ?? this.category,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -239,6 +247,8 @@ class NotebookNote {
     return {
       'id': id,
       'title': title,
+      'workspace': workspace,
+      'notebook': notebook,
       'category': category,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -252,6 +262,8 @@ class NotebookNote {
     return NotebookNote(
       id: json['id'] as String,
       title: json['title'] as String,
+      workspace: json['workspace'] as String? ?? 'Personal',
+      notebook: json['notebook'] as String? ?? 'Inbox',
       category: json['category'] as String,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),

@@ -16,7 +16,7 @@ void main() {
     await _pumpApp(tester);
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('Notebook'), findsOneWidget);
+    expect(find.text('Library'), findsOneWidget);
     expect(find.text('Raw'), findsOneWidget);
     expect(find.text('Enhanced'), findsOneWidget);
     expect(find.text('Local Fast'), findsOneWidget);
@@ -25,16 +25,24 @@ void main() {
     expect(find.text('Heading'), findsOneWidget);
   });
 
-  testWidgets('filters notes and keeps tapped note selected', (tester) async {
+  testWidgets('filters notes by search and workspace', (tester) async {
     await _pumpApp(tester);
+
+    final schoolChip = find.widgetWithText(FilterChip, 'School');
+    await tester.ensureVisible(schoolChip);
+    await tester.tap(schoolChip);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Lecture scraps'), findsWidgets);
+    expect(find.text('Meeting notes with designer'), findsNothing);
 
     await tester.enterText(find.byType(TextField).first, 'lecture');
     await tester.pumpAndSettle();
 
-    expect(find.text('Lecture scraps'), findsOneWidget);
+    expect(find.text('Lecture scraps'), findsWidgets);
     expect(find.text('Meeting notes with designer'), findsNothing);
 
-    await tester.tap(find.text('Lecture scraps'));
+    await tester.tap(find.text('Lecture scraps').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
@@ -100,7 +108,9 @@ void main() {
     final editor = find.byType(TextField).at(1);
     await tester.enterText(editor, '');
     await tester.pump();
-    await tester.tap(find.text('Math'));
+    final mathButton = find.text('Math');
+    await tester.ensureVisible(mathButton);
+    await tester.tap(mathButton);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 
@@ -151,6 +161,8 @@ void main() {
     final note = NotebookNote(
       id: 'table-note',
       title: 'Table note',
+      workspace: 'School',
+      notebook: 'Tables',
       category: 'Study',
       createdAt: now,
       updatedAt: now,
@@ -218,6 +230,8 @@ void main() {
     final note = NotebookNote(
       id: 'math-note',
       title: 'Math note',
+      workspace: 'School',
+      notebook: 'Math',
       category: 'Study',
       createdAt: now,
       updatedAt: now,
@@ -294,6 +308,8 @@ Var(X) &= E[X^2] - (E[X])^2
       final note = NotebookNote(
         id: 'trust-first-note',
         title: 'Trust-first note',
+        workspace: 'Product',
+        notebook: 'AI Commands',
         category: 'General',
         createdAt: now,
         updatedAt: now,
@@ -337,6 +353,81 @@ Var(X) &= E[X^2] - (E[X])^2
     },
   );
 
+  testWidgets('appends explicit AI results back into the raw note on demand', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final file = File(
+      '${Directory.systemTemp.path}/smart_notebook_widget_ai_apply_test.db',
+    );
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    addTearDown(() {
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    });
+
+    const engine = MockEnhancementEngine(
+      localModelAdapter: _AiCommandLocalModelAdapter(),
+    );
+    final repository = NotebookRepository.forTesting(
+      databasePath: file.path,
+      engine: engine,
+    );
+    addTearDown(repository.close);
+
+    final now = DateTime.now();
+    final note = NotebookNote(
+      id: 'apply-ai-note',
+      title: 'Apply AI note',
+      workspace: 'School',
+      notebook: 'Physics',
+      category: 'Study',
+      createdAt: now,
+      updatedAt: now,
+      rawContent: [
+        'Project sync',
+        '/math',
+        r'F = ma',
+        '/end',
+        '//explain formula',
+      ].join('\n'),
+      versions: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookWorkspace(
+          engine: engine,
+          repository: repository,
+          settings: AppSettings.defaults,
+          onSaveSettings: (_) async {},
+          initialNotes: [note],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    await tester.tap(find.text('Append below'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+
+    final editor = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(editor.controller?.text.contains('Formula Explanation'), isTrue);
+    expect(
+      editor.controller?.text.contains('force equals mass times acceleration'),
+      isTrue,
+    );
+  });
+
   testWidgets(
     'Cloud Accurate routes explicit AI requests through the cloud adapter',
     (tester) async {
@@ -370,6 +461,8 @@ Var(X) &= E[X^2] - (E[X])^2
       final note = NotebookNote(
         id: 'cloud-command-note',
         title: 'Cloud command note',
+        workspace: 'Product',
+        notebook: 'Definitions',
         category: 'General',
         createdAt: now,
         updatedAt: now,
@@ -436,6 +529,8 @@ Var(X) &= E[X^2] - (E[X])^2
     final note = NotebookNote(
       id: 'race-note',
       title: 'Race note',
+      workspace: 'Personal',
+      notebook: 'Inbox',
       category: 'General',
       createdAt: now,
       updatedAt: now,
@@ -466,6 +561,162 @@ Var(X) &= E[X^2] - (E[X])^2
 
     expect(find.textContaining('Enhanced: second note'), findsOneWidget);
     expect(find.textContaining('Enhanced: first note'), findsNothing);
+  });
+
+  testWidgets('creates a new note inside the active notebook scope', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final file = File(
+      '${Directory.systemTemp.path}/smart_notebook_widget_scope_creation_test.db',
+    );
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    addTearDown(() {
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    });
+
+    final repository = NotebookRepository.forTesting(
+      databasePath: file.path,
+      engine: const MockEnhancementEngine(),
+    );
+    addTearDown(repository.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookWorkspace(
+          engine: const MockEnhancementEngine(),
+          repository: repository,
+          settings: AppSettings.defaults,
+          onSaveSettings: (_) async {},
+          initialNotes: buildSeedNotes(const MockEnhancementEngine()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final schoolChip = find.widgetWithText(FilterChip, 'School');
+    await tester.ensureVisible(schoolChip);
+    await tester.tap(schoolChip);
+    await tester.pumpAndSettle();
+    final notebookChip = find.widgetWithText(FilterChip, 'General Study');
+    await tester.ensureVisible(notebookChip);
+    await tester.tap(notebookChip);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'New'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.textContaining('Untitled note'), findsWidgets);
+    expect(find.text('General Study'), findsWidgets);
+  });
+
+  testWidgets('renames selected note and updates rail plus top bar', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final schoolChip = find.widgetWithText(FilterChip, 'School');
+    await tester.ensureVisible(schoolChip);
+    await tester.tap(schoolChip);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lecture scraps').first);
+    await tester.pumpAndSettle();
+
+    final editorBefore = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(
+      editorBefore.controller?.text.contains('teh network has 1200 samples'),
+      isTrue,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('selected-note-actions-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename note'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('rename-note-field')),
+      'Entropy review',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Entropy review'), findsWidgets);
+    expect(find.text('Lecture scraps'), findsNothing);
+
+    final editorAfter = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(
+      editorAfter.controller?.text.contains('teh network has 1200 samples'),
+      isTrue,
+    );
+  });
+
+  testWidgets('moves selected note to another notebook and keeps it selected', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final schoolChip = find.widgetWithText(FilterChip, 'School');
+    await tester.ensureVisible(schoolChip);
+    await tester.tap(schoolChip);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lecture scraps').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('selected-note-actions-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Move note'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('move-note-workspace-field')),
+      'School',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('move-note-notebook-field')),
+      'Exam Prep',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Move'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Exam Prep'), findsWidgets);
+    expect(find.text('Lecture scraps'), findsWidgets);
+    expect(find.text('General Study'), findsNothing);
+  });
+
+  testWidgets('deletes selected note and falls back to another note', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+
+    final schoolChip = find.widgetWithText(FilterChip, 'School');
+    await tester.ensureVisible(schoolChip);
+    await tester.tap(schoolChip);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Lecture scraps').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey('selected-note-actions-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete note'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Lecture scraps'), findsNothing);
+    expect(find.text('AI notebook product direction'), findsWidgets);
+    expect(find.text('No notes available yet.'), findsNothing);
   });
 }
 

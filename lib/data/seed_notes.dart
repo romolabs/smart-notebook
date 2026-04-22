@@ -14,6 +14,8 @@ List<NotebookNote> buildSeedNotes(MockEnhancementEngine engine) {
     (
       id: '1',
       title: 'AI notebook product direction',
+      workspace: 'Product',
+      notebook: 'Strategy Lab',
       category: 'Strategy',
       updatedAt: now.subtract(const Duration(minutes: 8)),
       rawContent: '''
@@ -27,6 +29,8 @@ launch desktop first maybe mac and windows
     (
       id: '2',
       title: 'Meeting notes with designer',
+      workspace: 'Work',
+      notebook: 'Meetings',
       category: 'Meeting',
       updatedAt: now.subtract(const Duration(hours: 3)),
       rawContent: '''
@@ -40,6 +44,8 @@ maybe ship beta to 250 users in 2027
     (
       id: '3',
       title: 'Lecture scraps',
+      workspace: 'School',
+      notebook: 'General Study',
       category: 'Study',
       updatedAt: now.subtract(const Duration(days: 1)),
       rawContent: '''
@@ -61,6 +67,8 @@ recieve feedback from study group tomorrow
     return NotebookNote(
       id: seed.id,
       title: seed.title,
+      workspace: seed.workspace,
+      notebook: seed.notebook,
       category: seed.category,
       createdAt: seed.updatedAt,
       updatedAt: seed.updatedAt,

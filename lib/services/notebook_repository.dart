@@ -7,6 +7,9 @@ import '../data/seed_notes.dart';
 import '../models/notebook_models.dart';
 import 'mock_enhancement_engine.dart';
 
+const _defaultWorkspaceName = 'Personal';
+const _defaultNotebookName = 'Inbox';
+
 class NotebookRepository {
   NotebookRepository._({
     required this.databaseFactory,
@@ -124,6 +127,8 @@ class NotebookRepository {
         await txn.insert('notes', {
           'id': note.id,
           'title': note.title,
+          'workspace': note.workspace,
+          'notebook': note.notebook,
           'category': note.category,
           'created_at': note.createdAt.toIso8601String(),
           'updated_at': note.updatedAt.toIso8601String(),
@@ -160,7 +165,7 @@ class NotebookRepository {
     _database = await databaseFactory.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON;');
         },
@@ -185,6 +190,17 @@ class NotebookRepository {
               'ALTER TABLE app_settings ADD COLUMN openai_fast_model TEXT NOT NULL DEFAULT \'${AppSettings.defaults.openAiFastModel}\';',
             );
           }
+          if (oldVersion < 4) {
+            await db.execute(
+              'ALTER TABLE notes ADD COLUMN workspace TEXT NOT NULL DEFAULT \'$_defaultWorkspaceName\';',
+            );
+            await db.execute(
+              'ALTER TABLE notes ADD COLUMN notebook TEXT NOT NULL DEFAULT \'$_defaultNotebookName\';',
+            );
+            await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_notes_workspace_notebook ON notes(workspace, notebook, updated_at DESC);',
+            );
+          }
         },
       ),
     );
@@ -203,6 +219,8 @@ class NotebookRepository {
       CREATE TABLE notes (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
+        workspace TEXT NOT NULL,
+        notebook TEXT NOT NULL,
         category TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -228,11 +246,14 @@ class NotebookRepository {
       'CREATE INDEX idx_notes_updated_at ON notes(updated_at DESC);',
     );
     await db.execute(
+      'CREATE INDEX idx_notes_workspace_notebook ON notes(workspace, notebook, updated_at DESC);',
+    );
+    await db.execute(
       'CREATE INDEX idx_note_versions_note_id ON note_versions(note_id, version_number DESC);',
     );
     await _createSettingsTable(db);
     await db.insert('schema_migrations', {
-      'version': 3,
+      'version': 4,
       'applied_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
@@ -296,6 +317,8 @@ class NotebookRepository {
           return NotebookNote(
             id: id,
             title: row['title'] as String,
+            workspace: row['workspace'] as String? ?? _defaultWorkspaceName,
+            notebook: row['notebook'] as String? ?? _defaultNotebookName,
             category: row['category'] as String,
             createdAt: DateTime.parse(row['created_at'] as String),
             updatedAt: DateTime.parse(row['updated_at'] as String),
