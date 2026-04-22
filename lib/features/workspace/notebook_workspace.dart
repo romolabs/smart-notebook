@@ -1716,42 +1716,67 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
             ...versions.map(
               (version) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      margin: const EdgeInsets.only(top: 4),
-                      decoration: BoxDecoration(
-                        color: version.modelMode == ModelMode.localFast
-                            ? const Color(0xFF167C80)
-                            : const Color(0xFF4472C4),
-                        shape: BoxShape.circle,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          margin: const EdgeInsets.only(top: 4),
+                          decoration: BoxDecoration(
+                            color: version.modelMode == ModelMode.localFast
+                                ? const Color(0xFF167C80)
+                                : const Color(0xFF4472C4),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _versionLabel(version),
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                version.rawContent.trim().isEmpty
+                                    ? 'Empty raw capture'
+                                    : version.rawContent
+                                          .trim()
+                                          .split('\n')
+                                          .first,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _versionLabel(version),
-                            style: theme.textTheme.labelLarge?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            version.rawContent.trim().isEmpty
-                                ? 'Empty raw capture'
-                                : version.rawContent.trim().split('\n').first,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        TextButton(
+                          key: ValueKey('restore-raw-${version.id}'),
+                          onPressed: () => _restoreVersionRaw(version),
+                          child: const Text('Restore raw'),
+                        ),
+                        TextButton(
+                          key: ValueKey('apply-enhanced-${version.id}'),
+                          onPressed: () => _applyVersionEnhanced(version),
+                          child: const Text('Use enhanced'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2951,6 +2976,22 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         : (originalText.endsWith('\n\n') ? '' : '\n\n');
     final updatedText = '$originalText$separator$insertion';
     _applyRawEditorUpdate(updatedText, caretOffset: updatedText.length);
+  }
+
+  void _restoreVersionRaw(NotebookVersion version) {
+    _cancelPendingNoteWork();
+    _applyRawEditorUpdate(
+      version.rawContent,
+      caretOffset: version.rawContent.length,
+    );
+  }
+
+  void _applyVersionEnhanced(NotebookVersion version) {
+    _cancelPendingNoteWork();
+    _applyRawEditorUpdate(
+      version.enhancedContent,
+      caretOffset: version.enhancedContent.length,
+    );
   }
 
   String _formattedAiResult(AiCommandResult result) {

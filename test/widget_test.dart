@@ -718,6 +718,146 @@ Var(X) &= E[X^2] - (E[X])^2
     expect(find.text('AI notebook product direction'), findsWidgets);
     expect(find.text('No notes available yet.'), findsNothing);
   });
+
+  testWidgets('restores a saved raw snapshot into the editor', (tester) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final file = File(
+      '${Directory.systemTemp.path}/smart_notebook_widget_restore_raw_test.db',
+    );
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    addTearDown(() {
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    });
+
+    final now = DateTime.now();
+    final note = NotebookNote(
+      id: 'history-note',
+      title: 'History note',
+      workspace: 'School',
+      notebook: 'Physics',
+      category: 'Study',
+      createdAt: now,
+      updatedAt: now,
+      rawContent: 'Current draft',
+      versions: [
+        NotebookVersion(
+          id: 'history-old',
+          createdAt: now.subtract(const Duration(hours: 2)),
+          rawContent: 'Original lecture draft',
+          enhancedContent: 'Enhanced lecture draft',
+          modelMode: ModelMode.localFast,
+        ),
+      ],
+    );
+
+    final repository = NotebookRepository.forTesting(
+      databasePath: file.path,
+      engine: const MockEnhancementEngine(),
+    );
+    addTearDown(repository.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookWorkspace(
+          engine: const MockEnhancementEngine(),
+          repository: repository,
+          settings: AppSettings.defaults,
+          onSaveSettings: (_) async {},
+          initialNotes: [note],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final restoreButton = find.byKey(const ValueKey('restore-raw-history-old'));
+    await tester.ensureVisible(restoreButton);
+    await tester.tap(restoreButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+
+    final editor = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(editor.controller?.text, 'Original lecture draft');
+  });
+
+  testWidgets('applies a saved enhanced snapshot into the editor', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final file = File(
+      '${Directory.systemTemp.path}/smart_notebook_widget_apply_enhanced_test.db',
+    );
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    addTearDown(() {
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    });
+
+    final now = DateTime.now();
+    final note = NotebookNote(
+      id: 'history-note-enhanced',
+      title: 'History note enhanced',
+      workspace: 'School',
+      notebook: 'Physics',
+      category: 'Study',
+      createdAt: now,
+      updatedAt: now,
+      rawContent: 'Current scratchpad',
+      versions: [
+        NotebookVersion(
+          id: 'history-enhanced',
+          createdAt: now.subtract(const Duration(hours: 2)),
+          rawContent: 'Old raw scratchpad',
+          enhancedContent: 'Polished explanation with structure',
+          modelMode: ModelMode.cloudAccurate,
+        ),
+      ],
+    );
+
+    final repository = NotebookRepository.forTesting(
+      databasePath: file.path,
+      engine: const MockEnhancementEngine(),
+    );
+    addTearDown(repository.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookWorkspace(
+          engine: const MockEnhancementEngine(),
+          repository: repository,
+          settings: AppSettings.defaults,
+          onSaveSettings: (_) async {},
+          initialNotes: [note],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final applyButton = find.byKey(
+      const ValueKey('apply-enhanced-history-enhanced'),
+    );
+    await tester.ensureVisible(applyButton);
+    await tester.tap(applyButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+
+    final editor = tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(editor.controller?.text, 'Polished explanation with structure');
+  });
 }
 
 Future<void> _pumpApp(WidgetTester tester) async {
