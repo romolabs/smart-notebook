@@ -50,6 +50,7 @@ class NotebookRepository {
 
   Future<List<NotebookNote>> loadNotes() async {
     final db = await _openDatabase();
+    await _backfillScopeTables(db);
     final notes = await _fetchNotes(db);
     if (notes.isNotEmpty) {
       return notes;
@@ -123,6 +124,17 @@ class NotebookRepository {
       await txn.delete('note_versions');
       await txn.delete('notes');
 
+      for (final workspace in notes.map((note) => note.workspace).toSet()) {
+        await _insertWorkspace(txn, workspace);
+      }
+      for (final note in notes) {
+        await _insertNotebook(
+          txn,
+          workspace: note.workspace,
+          notebook: note.notebook,
+        );
+      }
+
       for (final note in notes) {
         await txn.insert('notes', {
           'id': note.id,
@@ -151,6 +163,244 @@ class NotebookRepository {
     });
   }
 
+  Future<List<NotebookWorkspaceScope>> loadWorkspaces() async {
+    final db = await _openDatabase();
+    await _backfillScopeTables(db);
+    final rows = await db.query(
+      'workspaces',
+      orderBy: 'name COLLATE NOCASE ASC',
+    );
+    return rows
+        .map(
+          (row) => NotebookWorkspaceScope(
+            name: row['name'] as String,
+            createdAt: DateTime.parse(row['created_at'] as String),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<List<NotebookDefinition>> loadNotebooks() async {
+    final db = await _openDatabase();
+    await _backfillScopeTables(db);
+    final rows = await db.query(
+      'notebooks',
+      orderBy: 'workspace_name COLLATE NOCASE ASC, name COLLATE NOCASE ASC',
+    );
+    return rows
+        .map(
+          (row) => NotebookDefinition(
+            workspace: row['workspace_name'] as String,
+            name: row['name'] as String,
+            createdAt: DateTime.parse(row['created_at'] as String),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> createWorkspace(String name) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw StateError('Workspace name cannot be empty.');
+    }
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      await _insertWorkspace(txn, normalized);
+    });
+  }
+
+  Future<void> renameWorkspace({
+    required String currentName,
+    required String nextName,
+  }) async {
+    final current = currentName.trim();
+    final next = nextName.trim();
+    if (current.isEmpty || next.isEmpty) {
+      throw StateError('Workspace name cannot be empty.');
+    }
+    if (current == next) {
+      return;
+    }
+
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        'workspaces',
+        where: 'name = ?',
+        whereArgs: [current],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        throw StateError('Workspace "$current" no longer exists.');
+      }
+
+      final conflicting = await txn.query(
+        'workspaces',
+        where: 'name = ?',
+        whereArgs: [next],
+        limit: 1,
+      );
+      if (conflicting.isNotEmpty) {
+        throw StateError('Workspace "$next" already exists.');
+      }
+
+      await txn.insert('workspaces', {
+        'name': next,
+        'created_at': existing.first['created_at'] as String,
+      });
+      await txn.update(
+        'notebooks',
+        {'workspace_name': next},
+        where: 'workspace_name = ?',
+        whereArgs: [current],
+      );
+      await txn.update(
+        'notes',
+        {'workspace': next},
+        where: 'workspace = ?',
+        whereArgs: [current],
+      );
+      await txn.delete('workspaces', where: 'name = ?', whereArgs: [current]);
+    });
+  }
+
+  Future<void> deleteWorkspace(String name) async {
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw StateError('Workspace name cannot be empty.');
+    }
+
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      final notesInWorkspace = await _countForQuery(
+        txn,
+        'SELECT COUNT(*) AS total FROM notes WHERE workspace = ?',
+        [normalized],
+      );
+      if (notesInWorkspace > 0) {
+        throw StateError(
+          'Move or delete the notes in "$normalized" before deleting this workspace.',
+        );
+      }
+
+      await txn.delete(
+        'workspaces',
+        where: 'name = ?',
+        whereArgs: [normalized],
+      );
+    });
+  }
+
+  Future<void> createNotebook({
+    required String workspace,
+    required String notebook,
+  }) async {
+    final normalizedWorkspace = workspace.trim();
+    final normalizedNotebook = notebook.trim();
+    if (normalizedWorkspace.isEmpty || normalizedNotebook.isEmpty) {
+      throw StateError('Workspace and notebook names cannot be empty.');
+    }
+
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      await _insertWorkspace(txn, normalizedWorkspace);
+      await _insertNotebook(
+        txn,
+        workspace: normalizedWorkspace,
+        notebook: normalizedNotebook,
+      );
+    });
+  }
+
+  Future<void> renameNotebook({
+    required String workspace,
+    required String currentName,
+    required String nextName,
+  }) async {
+    final normalizedWorkspace = workspace.trim();
+    final current = currentName.trim();
+    final next = nextName.trim();
+    if (normalizedWorkspace.isEmpty || current.isEmpty || next.isEmpty) {
+      throw StateError('Workspace and notebook names cannot be empty.');
+    }
+    if (current == next) {
+      return;
+    }
+
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      final existing = await txn.query(
+        'notebooks',
+        where: 'workspace_name = ? AND name = ?',
+        whereArgs: [normalizedWorkspace, current],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        throw StateError('Notebook "$current" no longer exists.');
+      }
+
+      final conflicting = await txn.query(
+        'notebooks',
+        where: 'workspace_name = ? AND name = ?',
+        whereArgs: [normalizedWorkspace, next],
+        limit: 1,
+      );
+      if (conflicting.isNotEmpty) {
+        throw StateError(
+          'Notebook "$next" already exists in "$normalizedWorkspace".',
+        );
+      }
+
+      await txn.insert('notebooks', {
+        'workspace_name': normalizedWorkspace,
+        'name': next,
+        'created_at': existing.first['created_at'] as String,
+      });
+      await txn.update(
+        'notes',
+        {'notebook': next},
+        where: 'workspace = ? AND notebook = ?',
+        whereArgs: [normalizedWorkspace, current],
+      );
+      await txn.delete(
+        'notebooks',
+        where: 'workspace_name = ? AND name = ?',
+        whereArgs: [normalizedWorkspace, current],
+      );
+    });
+  }
+
+  Future<void> deleteNotebook({
+    required String workspace,
+    required String notebook,
+  }) async {
+    final normalizedWorkspace = workspace.trim();
+    final normalizedNotebook = notebook.trim();
+    if (normalizedWorkspace.isEmpty || normalizedNotebook.isEmpty) {
+      throw StateError('Workspace and notebook names cannot be empty.');
+    }
+
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      final notesInNotebook = await _countForQuery(
+        txn,
+        'SELECT COUNT(*) AS total FROM notes WHERE workspace = ? AND notebook = ?',
+        [normalizedWorkspace, normalizedNotebook],
+      );
+      if (notesInNotebook > 0) {
+        throw StateError(
+          'Move or delete the notes in "$normalizedNotebook" before deleting it.',
+        );
+      }
+
+      await txn.delete(
+        'notebooks',
+        where: 'workspace_name = ? AND name = ?',
+        whereArgs: [normalizedWorkspace, normalizedNotebook],
+      );
+    });
+  }
+
   Future<void> close() async {
     await _database?.close();
     _database = null;
@@ -165,7 +415,7 @@ class NotebookRepository {
     _database = await databaseFactory.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON;');
         },
@@ -200,6 +450,10 @@ class NotebookRepository {
             await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_notes_workspace_notebook ON notes(workspace, notebook, updated_at DESC);',
             );
+          }
+          if (oldVersion < 5) {
+            await _createScopeTables(db);
+            await _backfillScopeTables(db);
           }
         },
       ),
@@ -251,11 +505,35 @@ class NotebookRepository {
     await db.execute(
       'CREATE INDEX idx_note_versions_note_id ON note_versions(note_id, version_number DESC);',
     );
+    await _createScopeTables(db);
     await _createSettingsTable(db);
     await db.insert('schema_migrations', {
-      'version': 4,
+      'version': 5,
       'applied_at': DateTime.now().toUtc().toIso8601String(),
     });
+  }
+
+  Future<void> _createScopeTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS workspaces (
+        name TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS notebooks (
+        workspace_name TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(workspace_name, name),
+        FOREIGN KEY(workspace_name) REFERENCES workspaces(name) ON DELETE CASCADE
+      );
+    ''');
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_notebooks_workspace_name ON notebooks(workspace_name, name COLLATE NOCASE ASC);',
+    );
   }
 
   Future<void> _createSettingsTable(Database db) async {
@@ -327,6 +605,75 @@ class NotebookRepository {
           );
         })
         .toList(growable: false);
+  }
+
+  Future<void> _backfillScopeTables(Database db) async {
+    await db.transaction((txn) async {
+      final workspaceRows = await txn.rawQuery(
+        'SELECT DISTINCT workspace FROM notes ORDER BY workspace COLLATE NOCASE ASC',
+      );
+      for (final row in workspaceRows) {
+        final workspace = row['workspace'] as String?;
+        if (workspace == null || workspace.trim().isEmpty) {
+          continue;
+        }
+        await _insertWorkspace(txn, workspace);
+      }
+
+      final notebookRows = await txn.rawQuery(
+        'SELECT DISTINCT workspace, notebook FROM notes ORDER BY workspace COLLATE NOCASE ASC, notebook COLLATE NOCASE ASC',
+      );
+      for (final row in notebookRows) {
+        final workspace = row['workspace'] as String?;
+        final notebook = row['notebook'] as String?;
+        if (workspace == null ||
+            notebook == null ||
+            workspace.trim().isEmpty ||
+            notebook.trim().isEmpty) {
+          continue;
+        }
+        await _insertNotebook(txn, workspace: workspace, notebook: notebook);
+      }
+    });
+  }
+
+  Future<void> _insertWorkspace(DatabaseExecutor db, String name) async {
+    await db.insert('workspaces', {
+      'name': name,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  Future<void> _insertNotebook(
+    DatabaseExecutor db, {
+    required String workspace,
+    required String notebook,
+  }) async {
+    await _insertWorkspace(db, workspace);
+    await db.insert('notebooks', {
+      'workspace_name': workspace,
+      'name': notebook,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  Future<int> _countForQuery(
+    DatabaseExecutor db,
+    String sql,
+    List<Object?> arguments,
+  ) async {
+    final rows = await db.rawQuery(sql, arguments);
+    if (rows.isEmpty) {
+      return 0;
+    }
+    final value = rows.first['total'];
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }
 

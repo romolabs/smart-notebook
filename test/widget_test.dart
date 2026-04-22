@@ -618,6 +618,129 @@ Var(X) &= E[X^2] - (E[X])^2
     expect(find.text('General Study'), findsWidgets);
   });
 
+  test(
+    'repository creates and deletes empty workspace/notebook scopes',
+    () async {
+      final file = File(
+        '${Directory.systemTemp.path}/smart_notebook_scope_repository_test.db',
+      );
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+      addTearDown(() {
+        if (file.existsSync()) {
+          file.deleteSync();
+        }
+      });
+
+      final repository = NotebookRepository.forTesting(
+        databasePath: file.path,
+        engine: const MockEnhancementEngine(),
+      );
+      addTearDown(repository.close);
+
+      await repository.createWorkspace('Research');
+      await repository.createNotebook(workspace: 'Research', notebook: 'Ideas');
+
+      final workspaces = await repository.loadWorkspaces();
+      final notebooks = await repository.loadNotebooks();
+      expect(
+        workspaces.map((workspace) => workspace.name),
+        contains('Research'),
+      );
+      expect(
+        notebooks.any(
+          (notebook) =>
+              notebook.workspace == 'Research' && notebook.name == 'Ideas',
+        ),
+        isTrue,
+      );
+
+      await repository.deleteNotebook(workspace: 'Research', notebook: 'Ideas');
+      await repository.deleteWorkspace('Research');
+
+      final remainingWorkspaces = await repository.loadWorkspaces();
+      final remainingNotebooks = await repository.loadNotebooks();
+      expect(
+        remainingWorkspaces.map((workspace) => workspace.name),
+        isNot(contains('Research')),
+      );
+      expect(
+        remainingNotebooks.any(
+          (notebook) =>
+              notebook.workspace == 'Research' && notebook.name == 'Ideas',
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'repository renames notebook and workspace scopes alongside notes',
+    () async {
+      final file = File(
+        '${Directory.systemTemp.path}/smart_notebook_scope_rename_test.db',
+      );
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+      addTearDown(() {
+        if (file.existsSync()) {
+          file.deleteSync();
+        }
+      });
+
+      final repository = NotebookRepository.forTesting(
+        databasePath: file.path,
+        engine: const MockEnhancementEngine(),
+      );
+      addTearDown(repository.close);
+
+      final now = DateTime.now();
+      await repository.saveNotes([
+        NotebookNote(
+          id: 'scope-note',
+          title: 'Scope note',
+          workspace: 'School',
+          notebook: 'General Study',
+          category: 'Study',
+          createdAt: now,
+          updatedAt: now,
+          rawContent: 'entropy notes',
+          versions: const [],
+        ),
+      ]);
+
+      await repository.renameNotebook(
+        workspace: 'School',
+        currentName: 'General Study',
+        nextName: 'Entropy Lab',
+      );
+      await repository.renameWorkspace(
+        currentName: 'School',
+        nextName: 'Courses',
+      );
+
+      final notes = await repository.loadNotes();
+      final workspaces = await repository.loadWorkspaces();
+      final notebooks = await repository.loadNotebooks();
+
+      expect(notes.single.workspace, 'Courses');
+      expect(notes.single.notebook, 'Entropy Lab');
+      expect(
+        workspaces.map((workspace) => workspace.name),
+        contains('Courses'),
+      );
+      expect(
+        notebooks.any(
+          (notebook) =>
+              notebook.workspace == 'Courses' && notebook.name == 'Entropy Lab',
+        ),
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('renames selected note and updates rail plus top bar', (
     tester,
   ) async {
@@ -690,7 +813,6 @@ Var(X) &= E[X^2] - (E[X])^2
 
     expect(find.text('Exam Prep'), findsWidgets);
     expect(find.text('Lecture scraps'), findsWidgets);
-    expect(find.text('General Study'), findsNothing);
   });
 
   testWidgets('deletes selected note and falls back to another note', (

@@ -60,6 +60,15 @@ class _MoveNoteResult {
 
 enum _NoteAction { rename, move, delete }
 
+enum _LibraryScopeAction {
+  createWorkspace,
+  createNotebook,
+  renameWorkspace,
+  deleteWorkspace,
+  renameNotebook,
+  deleteNotebook,
+}
+
 class NotebookWorkspace extends StatefulWidget {
   const NotebookWorkspace({
     super.key,
@@ -94,6 +103,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   static const _contentParser = NoteParser();
 
   List<NotebookNote> _notes = const [];
+  List<NotebookWorkspaceScope> _workspaces = const [];
+  List<NotebookDefinition> _notebooks = const [];
   NotebookNote? _selectedNote;
   EnhancementSnapshot _snapshot = const EnhancementSnapshot(
     enhancedContent: 'Your enhanced note will appear here as you type.',
@@ -442,6 +453,77 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                PopupMenuButton<_LibraryScopeAction>(
+                  key: const ValueKey('library-scope-actions-button'),
+                  tooltip: 'Manage library',
+                  onSelected: _handleLibraryScopeAction,
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: _LibraryScopeAction.createWorkspace,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.workspaces_outline),
+                        title: Text('Create workspace'),
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: _LibraryScopeAction.createNotebook,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.menu_book_outlined),
+                        title: Text('Create notebook'),
+                      ),
+                    ),
+                    if (_selectedWorkspaceFilter != _allWorkspacesLabel)
+                      const PopupMenuDivider(),
+                    if (_selectedWorkspaceFilter != _allWorkspacesLabel)
+                      const PopupMenuItem(
+                        value: _LibraryScopeAction.renameWorkspace,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.drive_file_rename_outline),
+                          title: Text('Rename workspace'),
+                        ),
+                      ),
+                    if (_selectedWorkspaceFilter != _allWorkspacesLabel)
+                      const PopupMenuItem(
+                        value: _LibraryScopeAction.deleteWorkspace,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.delete_outline),
+                          title: Text('Delete workspace'),
+                        ),
+                      ),
+                    if (_selectedWorkspaceFilter != _allWorkspacesLabel &&
+                        _selectedNotebookFilter != _allNotebooksLabel)
+                      const PopupMenuDivider(),
+                    if (_selectedWorkspaceFilter != _allWorkspacesLabel &&
+                        _selectedNotebookFilter != _allNotebooksLabel)
+                      const PopupMenuItem(
+                        value: _LibraryScopeAction.renameNotebook,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.edit_note_outlined),
+                          title: Text('Rename notebook'),
+                        ),
+                      ),
+                    if (_selectedWorkspaceFilter != _allWorkspacesLabel &&
+                        _selectedNotebookFilter != _allNotebooksLabel)
+                      const PopupMenuItem(
+                        value: _LibraryScopeAction.deleteNotebook,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.delete_sweep_outlined),
+                          title: Text('Delete notebook'),
+                        ),
+                      ),
+                  ],
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.folder_open_outlined),
+                  ),
+                ),
+                const SizedBox(width: 4),
                 FilledButton.tonalIcon(
                   onPressed: _createNewNote,
                   icon: const Icon(Icons.add),
@@ -2098,7 +2180,9 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   Future<void> _loadNotes() async {
     try {
       final notes = await widget.repository.loadNotes();
-      _hydrateLoadedNotes(notes);
+      final workspaces = await widget.repository.loadWorkspaces();
+      final notebooks = await widget.repository.loadNotebooks();
+      _hydrateLoadedNotes(notes, workspaces: workspaces, notebooks: notebooks);
     } catch (error) {
       if (!mounted) {
         return;
@@ -2110,14 +2194,25 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     }
   }
 
-  void _hydrateLoadedNotes(List<NotebookNote> notes) {
+  void _hydrateLoadedNotes(
+    List<NotebookNote> notes, {
+    List<NotebookWorkspaceScope> workspaces = const [],
+    List<NotebookDefinition> notebooks = const [],
+  }) {
     final selected = notes.firstOrNull;
+    final scopeCollections = _deriveScopeCollections(
+      notes: notes,
+      workspaces: workspaces,
+      notebooks: notebooks,
+    );
     if (!mounted) {
       return;
     }
 
     setState(() {
       _notes = notes;
+      _workspaces = scopeCollections.workspaces;
+      _notebooks = scopeCollections.notebooks;
       _selectedNote = selected;
       _controller.text = selected?.rawContent ?? '';
       _aiCommandResults = const {};
@@ -2127,6 +2222,59 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     if (selected != null) {
       unawaited(_refreshNoteProcessing(selected.rawContent));
     }
+  }
+
+  ({
+    List<NotebookWorkspaceScope> workspaces,
+    List<NotebookDefinition> notebooks,
+  })
+  _deriveScopeCollections({
+    required List<NotebookNote> notes,
+    required List<NotebookWorkspaceScope> workspaces,
+    required List<NotebookDefinition> notebooks,
+  }) {
+    final workspaceByName = <String, NotebookWorkspaceScope>{
+      for (final workspace in workspaces) workspace.name: workspace,
+    };
+    final notebookByKey = <String, NotebookDefinition>{
+      for (final notebook in notebooks)
+        '${notebook.workspace}:::${notebook.name}': notebook,
+    };
+
+    for (final note in notes) {
+      workspaceByName.putIfAbsent(
+        note.workspace,
+        () => NotebookWorkspaceScope(
+          name: note.workspace,
+          createdAt: note.createdAt,
+        ),
+      );
+      notebookByKey.putIfAbsent(
+        '${note.workspace}:::${note.notebook}',
+        () => NotebookDefinition(
+          workspace: note.workspace,
+          name: note.notebook,
+          createdAt: note.createdAt,
+        ),
+      );
+    }
+
+    final mergedWorkspaces = workspaceByName.values.toList(growable: false)
+      ..sort(
+        (left, right) =>
+            left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+      );
+    final mergedNotebooks = notebookByKey.values.toList(growable: false)
+      ..sort((left, right) {
+        final workspaceCompare = left.workspace.toLowerCase().compareTo(
+          right.workspace.toLowerCase(),
+        );
+        if (workspaceCompare != 0) {
+          return workspaceCompare;
+        }
+        return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+      });
+    return (workspaces: mergedWorkspaces, notebooks: mergedNotebooks);
   }
 
   void _queueEnhancement(String value) {
@@ -2357,9 +2505,497 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     _syncSelectionToVisibleNotes();
   }
 
+  Future<void> _handleLibraryScopeAction(_LibraryScopeAction action) async {
+    switch (action) {
+      case _LibraryScopeAction.createWorkspace:
+        return _createWorkspace();
+      case _LibraryScopeAction.createNotebook:
+        return _createNotebook();
+      case _LibraryScopeAction.renameWorkspace:
+        return _renameWorkspace();
+      case _LibraryScopeAction.deleteWorkspace:
+        return _deleteWorkspace();
+      case _LibraryScopeAction.renameNotebook:
+        return _renameNotebook();
+      case _LibraryScopeAction.deleteNotebook:
+        return _deleteNotebook();
+    }
+  }
+
   void _cancelPendingNoteWork() {
     _persistDebounce?.cancel();
     _enhancementDebounce?.cancel();
+  }
+
+  Future<void> _createWorkspace() async {
+    _cancelPendingNoteWork();
+    final controller = TextEditingController(
+      text: _selectedWorkspaceFilter == _allWorkspacesLabel
+          ? ''
+          : _selectedWorkspaceFilter,
+    );
+    final createdName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Create workspace'),
+          content: TextField(
+            key: const ValueKey('create-workspace-field'),
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Workspace name',
+              hintText: 'School',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final normalized = createdName?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return;
+    }
+
+    try {
+      await widget.repository.createWorkspace(normalized);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _workspaces = _deriveScopeCollections(
+          notes: _notes,
+          workspaces: [
+            ..._workspaces,
+            NotebookWorkspaceScope(name: normalized, createdAt: DateTime.now()),
+          ],
+          notebooks: _notebooks,
+        ).workspaces;
+        _selectedWorkspaceFilter = normalized;
+        _selectedNotebookFilter = _allNotebooksLabel;
+      });
+      _syncSelectionToVisibleNotes();
+    } catch (error) {
+      _showScopeMessage(error.toString());
+    }
+  }
+
+  Future<void> _createNotebook() async {
+    _cancelPendingNoteWork();
+    final workspaceController = TextEditingController(
+      text: _selectedWorkspaceFilter == _allWorkspacesLabel
+          ? (_selectedNote?.workspace ?? _defaultWorkspace)
+          : _selectedWorkspaceFilter,
+    );
+    final notebookController = TextEditingController();
+    final created = await showDialog<_MoveNoteResult>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Create notebook'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  key: const ValueKey('create-notebook-workspace-field'),
+                  controller: workspaceController,
+                  autofocus: true,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Workspace',
+                    hintText: 'School',
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  key: const ValueKey('create-notebook-field'),
+                  controller: notebookController,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: 'Notebook name',
+                    hintText: 'General Study',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  _MoveNoteResult(
+                    workspace: workspaceController.text.trim(),
+                    notebook: notebookController.text.trim(),
+                  ),
+                );
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (created == null ||
+        created.workspace.isEmpty ||
+        created.notebook.isEmpty) {
+      return;
+    }
+
+    try {
+      await widget.repository.createNotebook(
+        workspace: created.workspace,
+        notebook: created.notebook,
+      );
+      if (!mounted) {
+        return;
+      }
+      final merged = _deriveScopeCollections(
+        notes: _notes,
+        workspaces: [
+          ..._workspaces,
+          NotebookWorkspaceScope(
+            name: created.workspace,
+            createdAt: DateTime.now(),
+          ),
+        ],
+        notebooks: [
+          ..._notebooks,
+          NotebookDefinition(
+            workspace: created.workspace,
+            name: created.notebook,
+            createdAt: DateTime.now(),
+          ),
+        ],
+      );
+      setState(() {
+        _workspaces = merged.workspaces;
+        _notebooks = merged.notebooks;
+        _selectedWorkspaceFilter = created.workspace;
+        _selectedNotebookFilter = created.notebook;
+      });
+      _syncSelectionToVisibleNotes();
+    } catch (error) {
+      _showScopeMessage(error.toString());
+    }
+  }
+
+  Future<void> _renameWorkspace() async {
+    if (_selectedWorkspaceFilter == _allWorkspacesLabel) {
+      return;
+    }
+
+    _cancelPendingNoteWork();
+    final currentName = _selectedWorkspaceFilter;
+    final controller = TextEditingController(text: currentName);
+    final updatedName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Rename workspace'),
+          content: TextField(
+            key: const ValueKey('rename-workspace-field'),
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Workspace name',
+              hintText: 'School',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final normalized = updatedName?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return;
+    }
+
+    try {
+      await widget.repository.renameWorkspace(
+        currentName: currentName,
+        nextName: normalized,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notes = _notes
+            .map(
+              (note) => note.workspace == currentName
+                  ? note.copyWith(workspace: normalized)
+                  : note,
+            )
+            .toList(growable: false);
+        _workspaces = _workspaces
+            .map(
+              (workspace) => workspace.name == currentName
+                  ? workspace.copyWith(name: normalized)
+                  : workspace,
+            )
+            .toList(growable: false);
+        _notebooks = _notebooks
+            .map(
+              (notebook) => notebook.workspace == currentName
+                  ? notebook.copyWith(workspace: normalized)
+                  : notebook,
+            )
+            .toList(growable: false);
+        if (_selectedNote?.workspace == currentName) {
+          _selectedNote = _selectedNote?.copyWith(workspace: normalized);
+        }
+        _selectedWorkspaceFilter = normalized;
+      });
+      _syncSelectionToVisibleNotes();
+    } catch (error) {
+      _showScopeMessage(error.toString());
+    }
+  }
+
+  Future<void> _deleteWorkspace() async {
+    if (_selectedWorkspaceFilter == _allWorkspacesLabel) {
+      return;
+    }
+
+    _cancelPendingNoteWork();
+    final workspaceName = _selectedWorkspaceFilter;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete workspace'),
+          content: Text(
+            'Delete "$workspaceName"? This only works when the workspace has no notes left.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF8A2424),
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await widget.repository.deleteWorkspace(workspaceName);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _workspaces = _workspaces
+            .where((workspace) => workspace.name != workspaceName)
+            .toList(growable: false);
+        _notebooks = _notebooks
+            .where((notebook) => notebook.workspace != workspaceName)
+            .toList(growable: false);
+        _selectedWorkspaceFilter = _allWorkspacesLabel;
+        _selectedNotebookFilter = _allNotebooksLabel;
+      });
+      _syncSelectionToVisibleNotes();
+    } catch (error) {
+      _showScopeMessage(error.toString());
+    }
+  }
+
+  Future<void> _renameNotebook() async {
+    if (_selectedWorkspaceFilter == _allWorkspacesLabel ||
+        _selectedNotebookFilter == _allNotebooksLabel) {
+      return;
+    }
+
+    _cancelPendingNoteWork();
+    final workspaceName = _selectedWorkspaceFilter;
+    final currentName = _selectedNotebookFilter;
+    final controller = TextEditingController(text: currentName);
+    final updatedName = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Rename notebook'),
+          content: TextField(
+            key: const ValueKey('rename-notebook-field'),
+            controller: controller,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Notebook name',
+              hintText: 'General Study',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final normalized = updatedName?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return;
+    }
+
+    try {
+      await widget.repository.renameNotebook(
+        workspace: workspaceName,
+        currentName: currentName,
+        nextName: normalized,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notes = _notes
+            .map(
+              (note) =>
+                  note.workspace == workspaceName &&
+                      note.notebook == currentName
+                  ? note.copyWith(notebook: normalized)
+                  : note,
+            )
+            .toList(growable: false);
+        _notebooks = _notebooks
+            .map(
+              (notebook) =>
+                  notebook.workspace == workspaceName &&
+                      notebook.name == currentName
+                  ? notebook.copyWith(name: normalized)
+                  : notebook,
+            )
+            .toList(growable: false);
+        if (_selectedNote?.workspace == workspaceName &&
+            _selectedNote?.notebook == currentName) {
+          _selectedNote = _selectedNote?.copyWith(notebook: normalized);
+        }
+        _selectedNotebookFilter = normalized;
+      });
+      _syncSelectionToVisibleNotes();
+    } catch (error) {
+      _showScopeMessage(error.toString());
+    }
+  }
+
+  Future<void> _deleteNotebook() async {
+    if (_selectedWorkspaceFilter == _allWorkspacesLabel ||
+        _selectedNotebookFilter == _allNotebooksLabel) {
+      return;
+    }
+
+    _cancelPendingNoteWork();
+    final workspaceName = _selectedWorkspaceFilter;
+    final notebookName = _selectedNotebookFilter;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete notebook'),
+          content: Text(
+            'Delete "$notebookName"? This only works when the notebook has no notes left.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF8A2424),
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await widget.repository.deleteNotebook(
+        workspace: workspaceName,
+        notebook: notebookName,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notebooks = _notebooks
+            .where(
+              (notebook) =>
+                  !(notebook.workspace == workspaceName &&
+                      notebook.name == notebookName),
+            )
+            .toList(growable: false);
+        _selectedNotebookFilter = _allNotebooksLabel;
+      });
+      _syncSelectionToVisibleNotes();
+    } catch (error) {
+      _showScopeMessage(error.toString());
+    }
+  }
+
+  void _showScopeMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    final normalized = message.startsWith('Bad state: ')
+        ? message.substring('Bad state: '.length)
+        : message;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(normalized)));
   }
 
   Future<void> _handleNoteActionForSelected(_NoteAction action) async {
@@ -2373,11 +3009,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   Future<void> _handleNoteAction(_NoteAction action, NotebookNote note) async {
     switch (action) {
       case _NoteAction.rename:
-        await _renameNote(note);
+        return _renameNote(note);
       case _NoteAction.move:
-        await _moveNote(note);
+        return _moveNote(note);
       case _NoteAction.delete:
-        await _deleteNote(note);
+        return _deleteNote(note);
     }
   }
 
@@ -2542,6 +3178,11 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       orElse: () => remaining.firstOrNull ?? _buildEmptyNote(),
     );
     final nextNotes = remaining.isEmpty ? [nextSelected] : remaining;
+    final mergedScopes = _deriveScopeCollections(
+      notes: nextNotes,
+      workspaces: _workspaces,
+      notebooks: _notebooks,
+    );
 
     setState(() {
       if (!nextNotes.any((note) => _isVisibleInCurrentScope(note))) {
@@ -2549,6 +3190,8 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         _selectedNotebookFilter = _allNotebooksLabel;
       }
       _notes = nextNotes;
+      _workspaces = mergedScopes.workspaces;
+      _notebooks = mergedScopes.notebooks;
       _selectedNote = nextSelected;
       _controller.text = nextSelected.rawContent;
       _aiCommandResults = const {};
@@ -2573,9 +3216,17 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       return;
     }
 
+    final nextNotes = _replaceNote(updated);
+    final mergedScopes = _deriveScopeCollections(
+      notes: nextNotes,
+      workspaces: _workspaces,
+      notebooks: _notebooks,
+    );
     setState(() {
       _selectedNote = updated;
-      _notes = _replaceNote(updated);
+      _notes = nextNotes;
+      _workspaces = mergedScopes.workspaces;
+      _notebooks = mergedScopes.notebooks;
     });
     _syncSelectionToVisibleNotes();
     await widget.repository.saveNotes(_notes);
@@ -2627,7 +3278,13 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
         ? (_selectedNote?.workspace ?? _defaultWorkspace)
         : _selectedWorkspaceFilter;
     final notebook = _selectedNotebookFilter == _allNotebooksLabel
-        ? (_selectedNote?.notebook ?? _defaultNotebook)
+        ? (_selectedWorkspaceFilter == _allWorkspacesLabel
+              ? (_selectedNote?.notebook ?? _defaultNotebook)
+              : (_notebooks
+                        .where((item) => item.workspace == workspace)
+                        .map((item) => item.name)
+                        .firstOrNull ??
+                    _defaultNotebook))
         : _selectedNotebookFilter;
     final newNote = NotebookNote(
       id: 'note-${now.microsecondsSinceEpoch}',
@@ -2640,11 +3297,19 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
       rawContent: '',
       versions: const [],
     );
+    final nextNotes = [newNote, ..._notes];
+    final mergedScopes = _deriveScopeCollections(
+      notes: nextNotes,
+      workspaces: _workspaces,
+      notebooks: _notebooks,
+    );
 
     setState(() {
       _selectedWorkspaceFilter = workspace;
       _selectedNotebookFilter = notebook;
-      _notes = [newNote, ..._notes];
+      _notes = nextNotes;
+      _workspaces = mergedScopes.workspaces;
+      _notebooks = mergedScopes.notebooks;
       _selectedNote = newNote;
       _controller.clear();
       _aiCommandResults = const {};
@@ -2712,9 +3377,9 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
   }
 
   List<String> get _workspaceFilters {
-    final workspaces =
-        _notes.map((note) => note.workspace).toSet().toList(growable: false)
-          ..sort();
+    final workspaces = _workspaces
+        .map((workspace) => workspace.name)
+        .toList(growable: false);
     return [_allWorkspacesLabel, ...workspaces];
   }
 
@@ -2722,13 +3387,10 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     if (_selectedWorkspaceFilter == _allWorkspacesLabel) {
       return const [_allNotebooksLabel];
     }
-    final notebooks =
-        _notes
-            .where((note) => note.workspace == _selectedWorkspaceFilter)
-            .map((note) => note.notebook)
-            .toSet()
-            .toList(growable: false)
-          ..sort();
+    final notebooks = _notebooks
+        .where((notebook) => notebook.workspace == _selectedWorkspaceFilter)
+        .map((notebook) => notebook.name)
+        .toList(growable: false);
     return [_allNotebooksLabel, ...notebooks];
   }
 

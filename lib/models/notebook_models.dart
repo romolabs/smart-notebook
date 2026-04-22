@@ -196,6 +196,44 @@ class NotebookVersion {
   }
 }
 
+class NotebookWorkspaceScope {
+  const NotebookWorkspaceScope({required this.name, required this.createdAt});
+
+  final String name;
+  final DateTime createdAt;
+
+  NotebookWorkspaceScope copyWith({String? name, DateTime? createdAt}) {
+    return NotebookWorkspaceScope(
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+}
+
+class NotebookDefinition {
+  const NotebookDefinition({
+    required this.workspace,
+    required this.name,
+    required this.createdAt,
+  });
+
+  final String workspace;
+  final String name;
+  final DateTime createdAt;
+
+  NotebookDefinition copyWith({
+    String? workspace,
+    String? name,
+    DateTime? createdAt,
+  }) {
+    return NotebookDefinition(
+      workspace: workspace ?? this.workspace,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+}
+
 class NotebookNote {
   const NotebookNote({
     required this.id,
