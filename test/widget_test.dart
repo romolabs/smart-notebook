@@ -780,6 +780,8 @@ Var(X) &= E[X^2] - (E[X])^2
     final restoreButton = find.byKey(const ValueKey('restore-raw-history-old'));
     await tester.ensureVisible(restoreButton);
     await tester.tap(restoreButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Restore'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
 
@@ -787,7 +789,7 @@ Var(X) &= E[X^2] - (E[X])^2
     expect(editor.controller?.text, 'Original lecture draft');
   });
 
-  testWidgets('applies a saved enhanced snapshot into the editor', (
+  testWidgets('appends a saved enhanced snapshot into the editor', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1440, 1200);
@@ -848,7 +850,7 @@ Var(X) &= E[X^2] - (E[X])^2
     await tester.pumpAndSettle();
 
     final applyButton = find.byKey(
-      const ValueKey('apply-enhanced-history-enhanced'),
+      const ValueKey('append-enhanced-history-enhanced'),
     );
     await tester.ensureVisible(applyButton);
     await tester.tap(applyButton);
@@ -856,7 +858,11 @@ Var(X) &= E[X^2] - (E[X])^2
     await tester.pump(const Duration(milliseconds: 700));
 
     final editor = tester.widget<TextField>(find.byType(TextField).at(1));
-    expect(editor.controller?.text, 'Polished explanation with structure');
+    expect(editor.controller?.text, contains('Current scratchpad'));
+    expect(
+      editor.controller?.text,
+      contains('Polished explanation with structure'),
+    );
   });
 }
 

@@ -1771,11 +1771,20 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
                           onPressed: () => _restoreVersionRaw(version),
                           child: const Text('Restore raw'),
                         ),
-                        TextButton(
-                          key: ValueKey('apply-enhanced-${version.id}'),
-                          onPressed: () => _applyVersionEnhanced(version),
-                          child: const Text('Use enhanced'),
-                        ),
+                        if (version.enhancedContent.trim().isNotEmpty)
+                          TextButton(
+                            key: ValueKey('insert-enhanced-${version.id}'),
+                            onPressed: () =>
+                                _insertVersionEnhancedAtCursor(version),
+                            child: const Text('Insert enhanced'),
+                          ),
+                        if (version.enhancedContent.trim().isNotEmpty)
+                          TextButton(
+                            key: ValueKey('append-enhanced-${version.id}'),
+                            onPressed: () =>
+                                _appendVersionEnhancedBelow(version),
+                            child: const Text('Append enhanced'),
+                          ),
                       ],
                     ),
                   ],
@@ -2978,7 +2987,34 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     _applyRawEditorUpdate(updatedText, caretOffset: updatedText.length);
   }
 
-  void _restoreVersionRaw(NotebookVersion version) {
+  Future<void> _restoreVersionRaw(NotebookVersion version) async {
+    if (_controller.text != version.rawContent) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Restore raw snapshot'),
+            content: const Text(
+              'This will replace the current raw editor content with the selected snapshot.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Restore'),
+              ),
+            ],
+          );
+        },
+      );
+      if (confirmed != true) {
+        return;
+      }
+    }
+
     _cancelPendingNoteWork();
     _applyRawEditorUpdate(
       version.rawContent,
@@ -2986,12 +3022,27 @@ class _NotebookWorkspaceState extends State<NotebookWorkspace> {
     );
   }
 
-  void _applyVersionEnhanced(NotebookVersion version) {
+  void _insertVersionEnhancedAtCursor(NotebookVersion version) {
+    final content = version.enhancedContent.trim();
+    if (content.isEmpty) {
+      return;
+    }
+    _insertSnippet(content);
+  }
+
+  void _appendVersionEnhancedBelow(NotebookVersion version) {
+    final content = version.enhancedContent.trim();
+    if (content.isEmpty) {
+      return;
+    }
+
     _cancelPendingNoteWork();
-    _applyRawEditorUpdate(
-      version.enhancedContent,
-      caretOffset: version.enhancedContent.length,
-    );
+    final originalText = _controller.text;
+    final separator = originalText.trim().isEmpty
+        ? ''
+        : (originalText.endsWith('\n\n') ? '' : '\n\n');
+    final updatedText = '$originalText$separator$content';
+    _applyRawEditorUpdate(updatedText, caretOffset: updatedText.length);
   }
 
   String _formattedAiResult(AiCommandResult result) {
